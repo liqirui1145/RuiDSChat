@@ -96,6 +96,15 @@ public final class Prefs {
         sp(context).edit().putInt("max_tokens", value < 0 ? 0 : value).apply();
     }
 
+    /** 每次请求携带的历史消息条数，0 表示不限制（仍受字符预算限制）。 */
+    public static int getContextMessages(Context context) {
+        return sp(context).getInt("context_messages", 20);
+    }
+
+    public static void setContextMessages(Context context, int value) {
+        sp(context).edit().putInt("context_messages", value < 0 ? 0 : value).apply();
+    }
+
     public static boolean isDarkMode(Context context) {
         return sp(context).getBoolean("dark_mode", false);
     }
@@ -104,47 +113,8 @@ public final class Prefs {
         sp(context).edit().putBoolean("dark_mode", value).apply();
     }
 
-    public static void saveHistory(Context context, List<ChatMessage> messages) {
-        JSONArray array = new JSONArray();
-        int start = Math.max(0, messages.size() - 100);
-        for (int i = start; i < messages.size(); i++) {
-            ChatMessage message = messages.get(i);
-            if (message.getRole() == ChatMessage.ROLE_ERROR) {
-                continue;
-            }
-            try {
-                array.put(message.toJson());
-            } catch (Exception ignored) {
-            }
-        }
-        sp(context).edit().putString(KEY_HISTORY, array.toString()).apply();
-    }
-
-    public static List<ChatMessage> loadHistory(Context context) {
-        List<ChatMessage> messages = new ArrayList<ChatMessage>();
-        String raw = sp(context).getString(KEY_HISTORY, null);
-        if (raw == null || raw.length() == 0) {
-            return messages;
-        }
-        try {
-            JSONArray array = new JSONArray(raw);
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject o = array.optJSONObject(i);
-                if (o != null) {
-                    messages.add(ChatMessage.fromJson(o));
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return messages;
-    }
-
-    public static void clearHistory(Context context) {
-        sp(context).edit().remove(KEY_HISTORY).apply();
-    }
-
-    /** 读取全部对话；首次升级时把旧的单条历史迁移成一个对话。 */
-    public static List<Conversation> loadConversations(Context context) {
+    /** 读取旧版存放在 SharedPreferences 里的对话数据，仅供迁移到 SQLite 使用。 */
+    static List<Conversation> readLegacyConversations(Context context) {
         List<Conversation> list = new ArrayList<Conversation>();
         String raw = sp(context).getString(KEY_CONVERSATIONS, null);
         if (raw != null && raw.length() > 0) {
@@ -160,7 +130,20 @@ public final class Prefs {
             }
         }
         if (list.isEmpty()) {
-            List<ChatMessage> old = loadHistory(context);
+            List<ChatMessage> old = new ArrayList<ChatMessage>();
+            String history = sp(context).getString(KEY_HISTORY, null);
+            if (history != null && history.length() > 0) {
+                try {
+                    JSONArray array = new JSONArray(history);
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject o = array.optJSONObject(i);
+                        if (o != null) {
+                            old.add(ChatMessage.fromJson(o));
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
             if (!old.isEmpty()) {
                 Conversation migrated = Conversation.create();
                 migrated.setTitle("历史对话");
@@ -172,16 +155,9 @@ public final class Prefs {
         return list;
     }
 
-    public static void saveConversations(Context context, List<Conversation> conversations) {
-        JSONArray array = new JSONArray();
-        for (Conversation conversation : conversations) {
-            try {
-                array.put(conversation.toJson());
-            } catch (Exception ignored) {
-            }
-        }
+    static void clearLegacyConversations(Context context) {
         sp(context).edit()
-                .putString(KEY_CONVERSATIONS, array.toString())
+                .remove(KEY_CONVERSATIONS)
                 .remove(KEY_HISTORY)
                 .apply();
     }

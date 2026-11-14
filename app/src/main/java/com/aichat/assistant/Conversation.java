@@ -1,7 +1,6 @@
 package com.aichat.assistant;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -15,6 +14,10 @@ public class Conversation {
     private String title;
     private long updatedAt;
     private List<ChatMessage> messages = new ArrayList<ChatMessage>();
+    /** 未加载消息时，用数据库里存的摘要展示抽屉列表。 */
+    private String storedDisplayTitle = "";
+    private int storedMessageCount;
+    private boolean messagesLoaded;
 
     public Conversation(String id, String title, long updatedAt) {
         this.id = id == null ? UUID.randomUUID().toString() : id;
@@ -43,14 +46,28 @@ public class Conversation {
         if (title != null && title.trim().length() > 0) {
             return title.trim();
         }
-        for (ChatMessage message : messages) {
-            if (message.getRole() == ChatMessage.ROLE_USER
-                    && message.getText().trim().length() > 0) {
-                String text = message.getText().trim().replace('\n', ' ');
-                return text.length() > 18 ? text.substring(0, 18) + "…" : text;
+        if (messagesLoaded) {
+            for (ChatMessage message : messages) {
+                if (message.getRole() == ChatMessage.ROLE_USER
+                        && message.getText().trim().length() > 0) {
+                    String text = message.getText().trim().replace('\n', ' ');
+                    return text.length() > 18 ? text.substring(0, 18) + "…" : text;
+                }
             }
         }
+        if (storedDisplayTitle != null && storedDisplayTitle.length() > 0) {
+            return storedDisplayTitle;
+        }
         return "新对话";
+    }
+
+    public void setStoredSummary(String displayTitle, int messageCount) {
+        this.storedDisplayTitle = displayTitle == null ? "" : displayTitle;
+        this.storedMessageCount = messageCount;
+    }
+
+    public boolean isMessagesLoaded() {
+        return messagesLoaded;
     }
 
     public long getUpdatedAt() {
@@ -67,9 +84,13 @@ public class Conversation {
 
     public void setMessages(List<ChatMessage> messages) {
         this.messages = messages == null ? new ArrayList<ChatMessage>() : messages;
+        this.messagesLoaded = true;
     }
 
     public int getMessageCount() {
+        if (!messagesLoaded) {
+            return storedMessageCount;
+        }
         int count = 0;
         for (ChatMessage message : messages) {
             if (message.getRole() != ChatMessage.ROLE_ERROR) {
@@ -77,22 +98,6 @@ public class Conversation {
             }
         }
         return count;
-    }
-
-    public JSONObject toJson() throws JSONException {
-        JSONObject o = new JSONObject();
-        o.put("id", id);
-        o.put("title", title);
-        o.put("updatedAt", updatedAt);
-        JSONArray array = new JSONArray();
-        for (ChatMessage message : messages) {
-            if (message.getRole() == ChatMessage.ROLE_ERROR) {
-                continue;
-            }
-            array.put(message.toJson());
-        }
-        o.put("messages", array);
-        return o;
     }
 
     public static Conversation fromJson(JSONObject o) {

@@ -1,6 +1,5 @@
 package com.aichat.assistant;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 public class ChatMessage {
@@ -14,10 +13,20 @@ public class ChatMessage {
     private String attachmentName;
     /** 实际发送给模型的内容（可能包含文件全文），不持久化。 */
     private String sendText;
+    /** 数据库中的行号，0 表示尚未写入。 */
+    private long dbId;
 
     public ChatMessage(int role, String text) {
         this.role = role;
         this.text = text == null ? "" : text;
+    }
+
+    public long getDbId() {
+        return dbId;
+    }
+
+    public void setDbId(long dbId) {
+        this.dbId = dbId;
     }
 
     public int getRole() {
@@ -51,16 +60,6 @@ public class ChatMessage {
 
     public boolean isUser() {
         return role == ROLE_USER;
-    }
-
-    public JSONObject toJson() throws JSONException {
-        JSONObject o = new JSONObject();
-        o.put("role", role);
-        o.put("text", text);
-        if (attachmentName != null) {
-            o.put("attachment", attachmentName);
-        }
-        return o;
     }
 
     public static ChatMessage fromJson(JSONObject o) {

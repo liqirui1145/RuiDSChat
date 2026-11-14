@@ -54,6 +54,7 @@ public class MainActivity extends BaseActivity {
     private final List<Conversation> conversations = new ArrayList<Conversation>();
     private Conversation current;
     private boolean drawerOpen;
+    private ChatStore store;
 
     private final List<ChatMessage> messages = new ArrayList<ChatMessage>();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -111,6 +112,7 @@ public class MainActivity extends BaseActivity {
         newConversationButton = (TextView) findViewById(R.id.new_conversation_button);
         drawerSettingsButton = (LinearLayout) findViewById(R.id.drawer_settings_button);
 
+        store = new ChatStore(this);
         loadConversations();
 
         adapter = new ChatAdapter(this, messages);
@@ -193,12 +195,14 @@ public class MainActivity extends BaseActivity {
         });
     }
 
-    /** 从本地读取全部对话，并定位到上次打开的对话。 */
+    /** 从本地数据库读取会话列表，并加载上次打开的会话消息。 */
     private void loadConversations() {
         conversations.clear();
-        conversations.addAll(Prefs.loadConversations(this));
+        conversations.addAll(store.loadConversations());
         if (conversations.isEmpty()) {
-            conversations.add(Conversation.create());
+            Conversation created = Conversation.create();
+            store.saveConversation(created);
+            conversations.add(created);
         }
         String savedId = Prefs.getCurrentConversationId(this);
         current = null;
@@ -210,6 +214,9 @@ public class MainActivity extends BaseActivity {
         }
         if (current == null) {
             current = conversations.get(0);
+        }
+        if (!current.isMessagesLoaded()) {
+            current.setMessages(store.loadMessages(current.getId()));
         }
         messages.clear();
         messages.addAll(current.getMessages());
@@ -316,7 +323,9 @@ public class MainActivity extends BaseActivity {
         setBusy(true);
         showStatus("正在准备…");
 
-        final List<ChatMessage> prior = new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1));
+        final List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
+                Prefs.getContextMessages(this));
         final Context appContext = getApplicationContext();
 
         streamFinishReason = null;
@@ -651,11 +660,12 @@ public class MainActivity extends BaseActivity {
             return;
         }
         saveCurrentConversation();
+        store.saveConversation(current);
         Conversation conversation = Conversation.create();
         conversations.add(0, conversation);
         current = conversation;
+        store.saveConversation(current);
         Prefs.setCurrentConversationId(this, current.getId());
-        Prefs.saveConversations(this, conversations);
         messages.clear();
         adapter.notifyDataSetChanged();
         clearAttachment();
@@ -678,9 +688,12 @@ public class MainActivity extends BaseActivity {
             return;
         }
         saveCurrentConversation();
+        store.saveConversation(current);
         current = target;
+        if (!current.isMessagesLoaded()) {
+            current.setMessages(store.loadMessages(current.getId()));
+        }
         Prefs.setCurrentConversationId(this, current.getId());
-        Prefs.saveConversations(this, conversations);
         messages.clear();
         messages.addAll(current.getMessages());
         adapter.notifyDataSetChanged();
@@ -730,7 +743,7 @@ public class MainActivity extends BaseActivity {
                     public void onClick(DialogInterface dialog, int which) {
                         conversation.setTitle(editText.getText().toString().trim());
                         conversation.setUpdatedAt(System.currentTimeMillis());
-                        Prefs.saveConversations(MainActivity.this, conversations);
+                        store.updateConversationMeta(conversation);
                         conversationAdapter.notifyDataSetChanged();
                     }
                 })
@@ -751,19 +764,25 @@ public class MainActivity extends BaseActivity {
                     public void onClick(DialogInterface dialog, int which) {
                         boolean wasCurrent = conversation == current;
                         conversations.remove(conversation);
+                        store.deleteConversation(conversation.getId());
                         if (conversations.isEmpty()) {
-                            conversations.add(Conversation.create());
+                            Conversation created = Conversation.create();
+                            store.saveConversation(created);
+                            conversations.add(created);
                         }
                         if (wasCurrent) {
                             current = conversations.get(0);
+                            if (!current.isMessagesLoaded()) {
+                                current.setMessages(store.loadMessages(current.getId()));
+                            }
                             messages.clear();
                             messages.addAll(current.getMessages());
                             adapter.notifyDataSetChanged();
                             Prefs.setCurrentConversationId(MainActivity.this, current.getId());
                         } else {
                             saveCurrentConversation();
+                            store.saveConversation(current);
                         }
-                        Prefs.saveConversations(MainActivity.this, conversations);
                         conversationAdapter.setCurrentId(current.getId());
                         conversationAdapter.notifyDataSetChanged();
                     }
@@ -786,7 +805,7 @@ public class MainActivity extends BaseActivity {
         }
         saveCurrentConversation();
         Prefs.setCurrentConversationId(this, current.getId());
-        Prefs.saveConversations(this, conversations);
+        store.saveConversation(current);
     }
 
     private void showKeyDialog() {

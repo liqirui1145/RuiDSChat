@@ -107,6 +107,20 @@
                 style="@style/FieldHint"
                 android:text="留空或填 0 使用接口默认上限；设置较小值可避免生成过长内容。" />
 
+            <TextView
+                style="@style/FieldLabel"
+                android:text="上下文保留条数" />
+
+            <EditText
+                android:id="@+id/context_messages_input"
+                style="@style/FieldInput"
+                android:hint="20"
+                android:inputType="number" />
+
+            <TextView
+                style="@style/FieldHint"
+                android:text="每次请求只携带最近这么多条历史消息，0 表示不限制条数（仍有总字数上限）。减少该值可加快响应、节省费用。" />
+
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
