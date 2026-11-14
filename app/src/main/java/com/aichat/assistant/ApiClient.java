@@ -92,6 +92,12 @@ public final class ApiClient {
     public interface StreamCallback {
         void onDelta(String text);
 
+        /** 深度思考模型的思考过程增量。 */
+        void onReasoning(String text);
+
+        /** 接口返回的本次请求 token 用量。 */
+        void onUsage(int promptTokens, int completionTokens);
+
         void onFinish(String finishReason);
     }
 
@@ -189,6 +195,14 @@ public final class ApiClient {
                         throw new ApiException("模型返回错误："
                                 + error.optString("message", "未知错误"));
                     }
+                    JSONObject usage = chunk.optJSONObject("usage");
+                    if (usage != null) {
+                        int promptTokens = usage.optInt("prompt_tokens", 0);
+                        int completionTokens = usage.optInt("completion_tokens", 0);
+                        if (callback != null && (promptTokens > 0 || completionTokens > 0)) {
+                            callback.onUsage(promptTokens, completionTokens);
+                        }
+                    }
                     JSONArray choices = chunk.optJSONArray("choices");
                     if (choices == null || choices.length() == 0) {
                         continue;
@@ -200,6 +214,11 @@ public final class ApiClient {
                     JSONObject delta = choice.optJSONObject("delta");
                     String piece = "";
                     if (delta != null) {
+                        String reasoning = delta.optString("reasoning_content",
+                                delta.optString("reasoning", ""));
+                        if (reasoning != null && reasoning.length() > 0 && callback != null) {
+                            callback.onReasoning(reasoning);
+                        }
                         piece = delta.optString("content", "");
                         if ((piece == null || piece.length() == 0)) {
                             // 兼容把增量放在 message 里的实现
@@ -263,6 +282,12 @@ public final class ApiClient {
         JSONObject root = new JSONObject();
         root.put("model", model);
         root.put("stream", stream);
+        if (stream) {
+            // 让接口在最后一个数据块返回 token 用量，用于费用估算
+            JSONObject streamOptions = new JSONObject();
+            streamOptions.put("include_usage", true);
+            root.put("stream_options", streamOptions);
+        }
         if (maxTokens > 0) {
             root.put("max_tokens", maxTokens);
         }

@@ -15,6 +15,8 @@ public class ApiSettingsActivity extends BaseActivity {
     private EditText chatModelInput;
     private EditText maxTokensInput;
     private EditText contextMessagesInput;
+    private EditText priceInputInput;
+    private EditText priceOutputInput;
     private EditText visionBaseUrlInput;
     private EditText visionModelInput;
     private EditText visionKeyInput;
@@ -29,6 +31,8 @@ public class ApiSettingsActivity extends BaseActivity {
         chatModelInput = (EditText) findViewById(R.id.chat_model_input);
         maxTokensInput = (EditText) findViewById(R.id.max_tokens_input);
         contextMessagesInput = (EditText) findViewById(R.id.context_messages_input);
+        priceInputInput = (EditText) findViewById(R.id.price_input_input);
+        priceOutputInput = (EditText) findViewById(R.id.price_output_input);
         visionBaseUrlInput = (EditText) findViewById(R.id.vision_base_url_input);
         visionModelInput = (EditText) findViewById(R.id.vision_model_input);
         visionKeyInput = (EditText) findViewById(R.id.vision_key_input);
@@ -39,6 +43,8 @@ public class ApiSettingsActivity extends BaseActivity {
         int maxTokens = Prefs.getMaxTokens(this);
         maxTokensInput.setText(maxTokens > 0 ? String.valueOf(maxTokens) : "");
         contextMessagesInput.setText(String.valueOf(Prefs.getContextMessages(this)));
+        priceInputInput.setText(formatPrice(Prefs.getInputPrice(this)));
+        priceOutputInput.setText(formatPrice(Prefs.getOutputPrice(this)));
         visionBaseUrlInput.setText(Prefs.getVisionBaseUrl(this));
         visionModelInput.setText(Prefs.getVisionModel(this));
         visionKeyInput.setText(Prefs.getVisionKey(this));
@@ -68,7 +74,6 @@ public class ApiSettingsActivity extends BaseActivity {
             chatModel = Prefs.DEFAULT_CHAT_MODEL;
         }
 
-        Prefs.setApiKey(this, apiKeyInput.getText().toString().trim());
         Prefs.setBaseUrl(this, baseUrl);
         Prefs.setChatModel(this, chatModel);
         int maxTokens = 0;
@@ -86,11 +91,36 @@ public class ApiSettingsActivity extends BaseActivity {
         } catch (NumberFormatException ignored) {
         }
         Prefs.setContextMessages(this, contextMessages);
+        Prefs.setInputPrice(this, parsePrice(priceInputInput.getText().toString(), 2f));
+        Prefs.setOutputPrice(this, parsePrice(priceOutputInput.getText().toString(), 8f));
         Prefs.setVisionBaseUrl(this, visionBaseUrlInput.getText().toString().trim());
         Prefs.setVisionModel(this, visionModelInput.getText().toString().trim());
-        Prefs.setVisionKey(this, visionKeyInput.getText().toString().trim());
+        boolean encrypted = Prefs.setVisionKey(this,
+                visionKeyInput.getText().toString().trim());
+        if (!Prefs.setApiKey(this, apiKeyInput.getText().toString().trim())) {
+            encrypted = false;
+        }
 
-        Toast.makeText(this, "接口设置已保存", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, encrypted
+                        ? "接口设置已保存，API Key 已加密"
+                        : "已保存，但系统 Keystore 不可用，Key 暂以明文保存",
+                Toast.LENGTH_LONG).show();
         finish();
+    }
+
+    private static float parsePrice(String text, float fallback) {
+        try {
+            float value = Float.parseFloat(text.trim());
+            return value < 0 ? 0 : value;
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String formatPrice(float value) {
+        if (value == Math.floor(value)) {
+            return String.valueOf((long) value);
+        }
+        return String.valueOf(value);
     }
 }

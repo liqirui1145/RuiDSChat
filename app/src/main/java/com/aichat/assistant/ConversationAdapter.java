@@ -59,9 +59,11 @@ public class ConversationAdapter extends BaseAdapter {
         LinearLayout root = (LinearLayout) view;
         TextView title = (TextView) view.findViewById(R.id.conversation_title);
         TextView meta = (TextView) view.findViewById(R.id.conversation_meta);
+        TextView pin = (TextView) view.findViewById(R.id.conversation_pin);
 
         Conversation conversation = conversations.get(position);
         title.setText(conversation.getDisplayTitle());
+        pin.setVisibility(conversation.isPinned() ? View.VISIBLE : View.GONE);
 
         String time = conversation.getUpdatedAt() > 0
                 ? TIME_FORMAT.format(new Date(conversation.getUpdatedAt()))
@@ -76,7 +78,7 @@ public class ConversationAdapter extends BaseAdapter {
         meta.setText(metaText);
 
         boolean current = conversation.getId().equals(currentId);
-        root.setBackgroundResource(current ? R.drawable.bg_chip : 0);
+        root.setActivated(current);
         return view;
     }
 }

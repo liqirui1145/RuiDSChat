@@ -18,6 +18,8 @@ public class Conversation {
     private String storedDisplayTitle = "";
     private int storedMessageCount;
     private boolean messagesLoaded;
+    /** 置顶会话排在抽屉列表最前面。 */
+    private boolean pinned;
 
     public Conversation(String id, String title, long updatedAt) {
         this.id = id == null ? UUID.randomUUID().toString() : id;
@@ -98,6 +100,14 @@ public class Conversation {
             }
         }
         return count;
+    }
+
+    public boolean isPinned() {
+        return pinned;
+    }
+
+    public void setPinned(boolean pinned) {
+        this.pinned = pinned;
     }
 
     public static Conversation fromJson(JSONObject o) {

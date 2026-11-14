@@ -14,11 +14,20 @@ import android.widget.BaseAdapter;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public class ChatAdapter extends BaseAdapter {
+
+    private static final SimpleDateFormat DATE_FORMAT =
+            new SimpleDateFormat("yyyy年M月d日", Locale.CHINA);
+    private static final SimpleDateFormat TIME_FORMAT =
+            new SimpleDateFormat("HH:mm", Locale.CHINA);
 
     private final Context context;
     private final List<ChatMessage> messages;
@@ -72,9 +81,69 @@ public class ChatAdapter extends BaseAdapter {
         if (view == null) {
             view = inflater.inflate(R.layout.item_message, parent, false);
         }
-        LinearLayout row = (LinearLayout) view;
-        TextView bubble = (TextView) view.findViewById(R.id.message_text);
-        ChatMessage msg = messages.get(position);
+        final ChatMessage msg = messages.get(position);
+
+        TextView dateView = (TextView) view.findViewById(R.id.message_date);
+        LinearLayout row = (LinearLayout) view.findViewById(R.id.message_row);
+        LinearLayout bubble = (LinearLayout) view.findViewById(R.id.message_bubble);
+        TextView reasoningToggle = (TextView) view.findViewById(R.id.reasoning_toggle);
+        TextView reasoningText = (TextView) view.findViewById(R.id.reasoning_text);
+        TextView bubbleText = (TextView) view.findViewById(R.id.message_text);
+        TextView timeView = (TextView) view.findViewById(R.id.message_time);
+
+        // 跨天时插入居中的日期分隔
+        if (position == 0 || !isSameDay(messages.get(position - 1).getTimestamp(),
+                msg.getTimestamp())) {
+            dateView.setVisibility(View.VISIBLE);
+            dateView.setText(formatDate(msg.getTimestamp()));
+        } else {
+            dateView.setVisibility(View.GONE);
+        }
+
+        switch (msg.getRole()) {
+            case ChatMessage.ROLE_USER:
+                row.setGravity(Gravity.END);
+                bubble.setBackgroundResource(R.drawable.bg_user_bubble);
+                bubbleText.setTextColor(context.getResources().getColor(R.color.white));
+                break;
+            case ChatMessage.ROLE_ERROR:
+                row.setGravity(Gravity.START);
+                bubble.setBackgroundResource(R.drawable.bg_error_bubble);
+                bubbleText.setTextColor(context.getResources().getColor(R.color.danger));
+                break;
+            default:
+                row.setGravity(Gravity.START);
+                bubble.setBackgroundResource(R.drawable.bg_ai_bubble);
+                bubbleText.setTextColor(context.getResources().getColor(R.color.text_primary));
+                break;
+        }
+        timeView.setText(TIME_FORMAT.format(new Date(msg.getTimestamp())));
+        LinearLayout.LayoutParams timeParams =
+                (LinearLayout.LayoutParams) timeView.getLayoutParams();
+        timeParams.gravity = msg.getRole() == ChatMessage.ROLE_USER
+                ? Gravity.END : Gravity.START;
+        timeView.setLayoutParams(timeParams);
+
+        // 深度思考过程：默认折叠，点击标题展开
+        String reasoning = msg.getReasoning();
+        boolean hasReasoning = msg.getRole() == ChatMessage.ROLE_ASSISTANT
+                && reasoning.trim().length() > 0;
+        if (hasReasoning) {
+            reasoningToggle.setVisibility(View.VISIBLE);
+            reasoningToggle.setText(msg.isReasoningExpanded()
+                    ? "▾ 收起思考过程" : "▸ 思考过程");
+            if (msg.isReasoningExpanded()) {
+                reasoningText.setVisibility(View.VISIBLE);
+                reasoningText.setText(reasoning.trim());
+            } else {
+                reasoningText.setVisibility(View.GONE);
+                reasoningText.setText("");
+            }
+        } else {
+            reasoningToggle.setVisibility(View.GONE);
+            reasoningText.setVisibility(View.GONE);
+            reasoningText.setText("");
+        }
 
         String content = msg.getText();
         if (msg.getAttachmentName() != null) {
@@ -85,26 +154,8 @@ public class ChatAdapter extends BaseAdapter {
             }
         }
 
-        switch (msg.getRole()) {
-            case ChatMessage.ROLE_USER:
-                row.setGravity(Gravity.END);
-                bubble.setBackgroundResource(R.drawable.bg_user_bubble);
-                bubble.setTextColor(context.getResources().getColor(R.color.white));
-                break;
-            case ChatMessage.ROLE_ERROR:
-                row.setGravity(Gravity.START);
-                bubble.setBackgroundResource(R.drawable.bg_error_bubble);
-                bubble.setTextColor(context.getResources().getColor(R.color.danger));
-                break;
-            default:
-                row.setGravity(Gravity.START);
-                bubble.setBackgroundResource(R.drawable.bg_ai_bubble);
-                bubble.setTextColor(context.getResources().getColor(R.color.text_primary));
-                break;
-        }
-
         if (msg.getRole() == ChatMessage.ROLE_ASSISTANT) {
-            bubble.setMovementMethod(LinkMovementMethod.getInstance());
+            bubbleText.setMovementMethod(LinkMovementMethod.getInstance());
             Rendered cached = renderCache.get(msg);
             if (cached == null || !content.equals(cached.source)) {
                 if (renderCache.size() > 400) {
@@ -115,13 +166,13 @@ public class ChatAdapter extends BaseAdapter {
                 cached.text = MarkdownRenderer.render(context, content);
                 renderCache.put(msg, cached);
             }
-            bubble.setText(appendContinueButton(msg, cached.text));
+            bubbleText.setText(appendContinueButton(msg, cached.text));
         } else {
-            bubble.setMovementMethod(null);
-            bubble.setText(content);
+            bubbleText.setMovementMethod(null);
+            bubbleText.setText(content);
         }
 
-        View.OnLongClickListener longClick = new View.OnLongClickListener() {
+        final View.OnLongClickListener longClick = new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
                 if (actionListener == null) {
@@ -133,6 +184,15 @@ public class ChatAdapter extends BaseAdapter {
         };
         view.setOnLongClickListener(longClick);
         bubble.setOnLongClickListener(longClick);
+        bubbleText.setOnLongClickListener(longClick);
+
+        reasoningToggle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                msg.setReasoningExpanded(!msg.isReasoningExpanded());
+                notifyDataSetChanged();
+            }
+        });
         return view;
     }
 
@@ -157,5 +217,27 @@ public class ChatAdapter extends BaseAdapter {
             }
         }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         return builder;
+    }
+
+    private static boolean isSameDay(long first, long second) {
+        Calendar a = Calendar.getInstance();
+        Calendar b = Calendar.getInstance();
+        a.setTimeInMillis(first);
+        b.setTimeInMillis(second);
+        return a.get(Calendar.YEAR) == b.get(Calendar.YEAR)
+                && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR);
+    }
+
+    private static String formatDate(long timestamp) {
+        long now = System.currentTimeMillis();
+        if (isSameDay(now, timestamp)) {
+            return "今天";
+        }
+        Calendar yesterday = Calendar.getInstance();
+        yesterday.add(Calendar.DAY_OF_YEAR, -1);
+        if (isSameDay(yesterday.getTimeInMillis(), timestamp)) {
+            return "昨天";
+        }
+        return DATE_FORMAT.format(new Date(timestamp));
     }
 }

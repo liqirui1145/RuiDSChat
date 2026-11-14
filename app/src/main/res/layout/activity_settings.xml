@@ -8,37 +8,30 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="52dp"
-        android:background="@color/surface"
+        android:background="@color/top_bar"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingLeft="8dp"
         android:paddingRight="16dp">
 
         <TextView
             android:id="@+id/back_button"
-            android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/bg_row_ripple"
             android:gravity="center"
-            android:paddingLeft="8dp"
-            android:paddingRight="14dp"
-            android:text="‹ 返回"
-            android:textColor="@color/brand"
-            android:textSize="15sp" />
+            android:text="‹"
+            android:textColor="@color/top_bar_text"
+            android:textSize="26sp" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="设置"
-            android:textColor="@color/text_primary"
-            android:textSize="17sp"
+            android:textColor="@color/top_bar_text"
+            android:textSize="18sp"
             android:textStyle="bold" />
     </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/divider" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -52,8 +45,8 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingBottom="28dp"
-            android:paddingLeft="18dp"
-            android:paddingRight="18dp">
+            android:paddingLeft="14dp"
+            android:paddingRight="14dp">
 
             <TextView
                 style="@style/SectionTitle"
@@ -62,42 +55,46 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_settings_input"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingLeft="14dp"
-                android:paddingRight="8dp"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp">
+                android:background="@color/surface"
+                android:orientation="vertical">
 
                 <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="10dp">
 
-                    <TextView
-                        android:layout_width="match_parent"
+                    <LinearLayout
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="深色模式"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
-                    <TextView
-                        android:layout_width="match_parent"
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="深色模式"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="夜间使用更护眼，可随时切换"
+                            android:textColor="@color/text_hint"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <CheckBox
+                        android:id="@+id/dark_mode_check"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="夜间使用更护眼，可随时切换"
-                        android:textColor="@color/text_hint"
-                        android:textSize="12sp" />
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp" />
                 </LinearLayout>
-
-                <CheckBox
-                    android:id="@+id/dark_mode_check"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp" />
             </LinearLayout>
 
             <TextView
@@ -105,85 +102,96 @@
                 android:text="接口" />
 
             <LinearLayout
-                android:id="@+id/api_settings_entry"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_settings_input"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingLeft="14dp"
-                android:paddingRight="14dp"
-                android:paddingTop="14dp"
-                android:paddingBottom="14dp">
+                android:background="@color/surface"
+                android:orientation="vertical">
 
                 <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:id="@+id/api_settings_entry"
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:background="@drawable/bg_row_ripple"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="API Key 与接口设置"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Key 加密、接口地址、模型与费用单价"
+                            android:textColor="@color/text_hint"
+                            android:textSize="11sp" />
+                    </LinearLayout>
 
                     <TextView
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="API Key 与接口设置"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="API Key、接口地址、对话模型、图片接口"
+                        android:text="›"
                         android:textColor="@color/text_hint"
-                        android:textSize="12sp" />
+                        android:textSize="22sp" />
                 </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="›"
-                    android:textColor="@color/text_hint"
-                    android:textSize="22sp" />
             </LinearLayout>
-
-            <TextView
-                style="@style/FieldHint"
-                android:text="API Key 等敏感配置已收纳到二级页面，避免在首页误触或暴露。" />
 
             <TextView
                 style="@style/SectionTitle"
                 android:text="其他" />
 
-            <TextView
-                style="@style/FieldLabel"
-                android:text="系统提示词" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@color/surface"
+                android:orientation="vertical"
+                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
+                android:paddingTop="4dp">
 
-            <EditText
-                android:id="@+id/system_prompt_input"
-                style="@style/FieldInput"
-                android:layout_height="92dp"
-                android:gravity="top"
-                android:hint="你是一个乐于助人的 AI 助手…"
-                android:inputType="textMultiLine"
-                android:lineSpacingExtra="2dp"
-                android:paddingTop="10dp"
-                android:singleLine="false" />
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="系统提示词" />
+
+                <EditText
+                    android:id="@+id/system_prompt_input"
+                    style="@style/FieldInput"
+                    android:layout_height="92dp"
+                    android:gravity="top"
+                    android:hint="你是一个乐于助人的 AI 助手…"
+                    android:inputType="textMultiLine"
+                    android:lineSpacingExtra="2dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:singleLine="false" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/save_button"
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
-                android:layout_marginTop="26dp"
+                android:layout_marginTop="22dp"
                 android:background="@drawable/bg_button_primary"
                 android:gravity="center"
                 android:text="保存设置"
                 android:textColor="@color/white"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:textSize="15sp" />
 
             <TextView
                 style="@style/FieldHint"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="14dp"
                 android:text="@string/settings_note" />
 
         </LinearLayout>

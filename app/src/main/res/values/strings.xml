@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">AI 对话助手</string>
     <string name="empty_hint">填写 DeepSeek API Key 后即可进行文字对话和图片分析。\n点击「附件」可以添加图片或文本文件进行分析。</string>
-    <string name="settings_note">说明：\n· API Key 仅保存在本机 SharedPreferences 中，不会上传到除接口服务商以外的任何服务器。\n· 支持分析 txt / md / json / csv / 代码等文本文件（超过约 3 万字符会自动截断），以及 jpg / png / webp / gif 图片。\n· 图片会先压缩，再以 base64 方式发送给 DeepSeek（deepseek-flash）或所配置的视觉接口。\n· 应用最低支持 Android 4.4.4。</string>
+    <string name="settings_note">说明：\n· API Key 使用 Android Keystore 加密后保存在本机，不会上传到除接口服务商以外的任何服务器；Android 6.0 及以上使用 AES-GCM，4.4–5.1 使用 RSA 加密。\n· 支持分析 txt / md / json / csv / 代码等文本文件（超过约 3 万字符会自动截断），以及 jpg / png / webp / gif 图片。\n· 图片会先压缩，再以 base64 方式发送给 DeepSeek（deepseek-flash）或所配置的视觉接口。\n· 应用最低支持 Android 4.4.4。</string>
 </resources>

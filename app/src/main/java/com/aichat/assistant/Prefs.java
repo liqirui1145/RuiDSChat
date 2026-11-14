@@ -29,11 +29,12 @@ public final class Prefs {
     }
 
     public static String getApiKey(Context context) {
-        return sp(context).getString("api_key", "");
+        return readSecret(context, "api_key");
     }
 
-    public static void setApiKey(Context context, String value) {
-        sp(context).edit().putString("api_key", value).apply();
+    /** 保存 API Key（Keystore 加密）。返回 false 表示系统 Keystore 不可用，已退回明文保存。 */
+    public static boolean setApiKey(Context context, String value) {
+        return writeSecret(context, "api_key", value);
     }
 
     public static String getBaseUrl(Context context) {
@@ -71,11 +72,12 @@ public final class Prefs {
     }
 
     public static String getVisionKey(Context context) {
-        return trim(sp(context).getString("vision_key", ""));
+        return readSecret(context, "vision_key");
     }
 
-    public static void setVisionKey(Context context, String value) {
-        sp(context).edit().putString("vision_key", value).apply();
+    /** 保存图片接口 Key（Keystore 加密）。返回 false 表示已退回明文保存。 */
+    public static boolean setVisionKey(Context context, String value) {
+        return writeSecret(context, "vision_key", value);
     }
 
     public static String getSystemPrompt(Context context) {
@@ -168,6 +170,80 @@ public final class Prefs {
 
     public static void setCurrentConversationId(Context context, String id) {
         sp(context).edit().putString(KEY_CURRENT_CONVERSATION, id).apply();
+    }
+
+    /** 读取按会话保存的输入框草稿。 */
+    public static String getDraft(Context context, String conversationId) {
+        if (conversationId == null || conversationId.length() == 0) {
+            return "";
+        }
+        return sp(context).getString("draft_" + conversationId, "");
+    }
+
+    public static void setDraft(Context context, String conversationId, String text) {
+        if (conversationId == null || conversationId.length() == 0) {
+            return;
+        }
+        String value = text == null ? "" : text;
+        if (value.trim().length() == 0) {
+            sp(context).edit().remove("draft_" + conversationId).apply();
+        } else {
+            sp(context).edit().putString("draft_" + conversationId, value).apply();
+        }
+    }
+
+    /** 输入 / 输出 tokens 的单价，单位：元 / 百万 tokens。 */
+    public static float getInputPrice(Context context) {
+        return sp(context).getFloat("price_input", 2f);
+    }
+
+    public static void setInputPrice(Context context, float value) {
+        sp(context).edit().putFloat("price_input", value < 0 ? 0f : value).apply();
+    }
+
+    public static float getOutputPrice(Context context) {
+        return sp(context).getFloat("price_output", 8f);
+    }
+
+    public static void setOutputPrice(Context context, float value) {
+        sp(context).edit().putFloat("price_output", value < 0 ? 0f : value).apply();
+    }
+
+    private static String readSecret(Context context, String key) {
+        String stored = sp(context).getString(key, "");
+        if (stored == null || stored.length() == 0) {
+            return "";
+        }
+        if (stored.startsWith("aes:") || stored.startsWith("rsa:")) {
+            String plain = ApiKeyStore.decrypt(context, stored);
+            if (plain.length() == 0) {
+                // 密钥被系统清除或数据损坏：丢弃密文，提示用户重新填写
+                sp(context).edit().remove(key).apply();
+            }
+            return plain;
+        }
+        // 旧版明文：首次读取时自动迁移为 Keystore 密文
+        String encrypted = ApiKeyStore.encrypt(context, stored);
+        if (encrypted != null && encrypted.length() > 0) {
+            sp(context).edit().putString(key, encrypted).apply();
+        }
+        return stored.trim();
+    }
+
+    private static boolean writeSecret(Context context, String key, String value) {
+        String plain = value == null ? "" : value.trim();
+        if (plain.length() == 0) {
+            sp(context).edit().remove(key).apply();
+            return true;
+        }
+        String encrypted = ApiKeyStore.encrypt(context, plain);
+        if (encrypted == null || encrypted.length() == 0) {
+            // Keystore 异常时退回明文，保证配置不丢失
+            sp(context).edit().putString(key, plain).apply();
+            return false;
+        }
+        sp(context).edit().putString(key, encrypted).apply();
+        return true;
     }
 
     private static String trim(String value) {

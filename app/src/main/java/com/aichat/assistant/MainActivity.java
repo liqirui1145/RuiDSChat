@@ -12,7 +12,10 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.EditText;
@@ -23,8 +26,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,9 +56,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private ListView conversationList;
     private TextView newConversationButton;
     private LinearLayout drawerSettingsButton;
+    private EditText drawerSearch;
+    private TextView usageSummary;
     private ConversationAdapter conversationAdapter;
 
+    /** 全部会话；conversations 用于切换与保存。 */
     private final List<Conversation> conversations = new ArrayList<Conversation>();
+    /** 抽屉中实际展示的会话（搜索过滤后）。 */
+    private final List<Conversation> visibleConversations = new ArrayList<Conversation>();
     private Conversation current;
     private boolean drawerOpen;
     private ChatStore store;
@@ -71,8 +82,12 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private volatile ApiClient.StreamHandle streamHandle;
     private ChatMessage streamingMessage;
     private final StringBuilder streamBuffer = new StringBuilder();
+    private final StringBuilder reasoningBuffer = new StringBuilder();
     private volatile boolean streamRefreshScheduled;
     private String streamFinishReason;
+    /** 本次请求返回的 token 用量。 */
+    private volatile int streamPromptTokens;
+    private volatile int streamCompletionTokens;
     /** 续写时已有内容的开头部分，流式刷新时拼在增量前面。 */
     private String streamPrefix = "";
     /** 用户是否停留在列表底部；上滑查看历史时不再强制跟随输出。 */
@@ -87,7 +102,16 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             if (target == null) {
                 return;
             }
-            target.setText(streamPrefix + snapshotStream());
+            String reasoning = snapshotReasoning();
+            String partial = streamPrefix + snapshotStream();
+            if (partial.length() == 0 && reasoning.length() > 0) {
+                // 思考阶段还没有正文，保留占位文案
+                partial = "正在思考…";
+            }
+            target.setText(partial);
+            if (reasoning.length() > 0) {
+                target.setReasoning(reasoning);
+            }
             hideStatus();
             adapter.notifyDataSetChanged();
             if (atBottom) {
@@ -118,6 +142,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         conversationList = (ListView) findViewById(R.id.conversation_list);
         newConversationButton = (TextView) findViewById(R.id.new_conversation_button);
         drawerSettingsButton = (LinearLayout) findViewById(R.id.drawer_settings_button);
+        drawerSearch = (EditText) findViewById(R.id.drawer_search);
+        usageSummary = (TextView) findViewById(R.id.usage_summary);
 
         store = new ChatStore(this);
         loadConversations();
@@ -144,9 +170,37 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             }
         });
 
-        conversationAdapter = new ConversationAdapter(this, conversations);
+        conversationAdapter = new ConversationAdapter(this, visibleConversations);
         conversationAdapter.setCurrentId(current.getId());
         conversationList.setAdapter(conversationAdapter);
+        refreshConversationList();
+
+        // 输入框恢复上次未发送的草稿
+        input.setText(Prefs.getDraft(this, current.getId()));
+        if (input.getText().length() > 0) {
+            input.setSelection(input.getText().length());
+        }
+        drawerSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                refreshConversationList();
+            }
+        });
+        usageSummary.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showUsageDialog();
+            }
+        });
+        refreshUsageSummary();
 
         sendButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -182,6 +236,12 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 newConversation();
             }
         });
+        findViewById(R.id.top_new_button).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                newConversation();
+            }
+        });
         drawerSettingsButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -206,14 +266,6 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             @Override
             public void onClick(View v) {
                 clearAttachment();
-            }
-        });
-
-        messageList.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
-            @Override
-            public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
-                copyMessage(position);
-                return true;
             }
         });
     }
@@ -268,6 +320,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     @Override
     protected void onPause() {
         super.onPause();
+        saveDraft();
         persistConversations();
     }
 
@@ -340,6 +393,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         scrollToBottom();
         input.setText("");
         clearAttachment();
+        Prefs.setDraft(this, current.getId(), "");
         persistConversations();
 
         final List<ChatMessage> prior = ContextWindow.trim(
@@ -359,9 +413,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         final Context appContext = getApplicationContext();
 
         streamFinishReason = null;
+        streamPromptTokens = 0;
+        streamCompletionTokens = 0;
         streamPrefix = continueTarget == null ? "" : continueTarget.getText();
         synchronized (streamBuffer) {
             streamBuffer.setLength(0);
+        }
+        synchronized (reasoningBuffer) {
+            reasoningBuffer.setLength(0);
         }
         streamRefreshScheduled = false;
         final ApiClient.StreamHandle handle = new ApiClient.StreamHandle();
@@ -432,6 +491,17 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                                 }
 
                                 @Override
+                                public void onReasoning(String text) {
+                                    onStreamReasoning(text);
+                                }
+
+                                @Override
+                                public void onUsage(int promptTokens, int completionTokens) {
+                                    streamPromptTokens = promptTokens;
+                                    streamCompletionTokens = completionTokens;
+                                }
+
+                                @Override
                                 public void onFinish(String finishReason) {
                                     if (finishReason != null) {
                                         streamFinishReason = finishReason;
@@ -476,6 +546,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     public void onMessageLongClick(final ChatMessage message) {
         final List<String> actions = new ArrayList<String>();
         actions.add("复制内容");
+        if (message.getRole() == ChatMessage.ROLE_USER) {
+            actions.add("编辑并重发");
+        }
         if (message.getRole() == ChatMessage.ROLE_ASSISTANT) {
             actions.add("重新生成");
         }
@@ -490,6 +563,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         String action = actions.get(which);
                         if ("复制内容".equals(action)) {
                             copyMessage(message);
+                        } else if ("编辑并重发".equals(action)) {
+                            editAndResend(message);
                         } else if ("重新生成".equals(action)) {
                             confirmRegenerate(message);
                         } else if ("删除这条".equals(action)) {
@@ -500,6 +575,35 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                     }
                 })
                 .show();
+    }
+
+    /** 把这条用户消息回填到输入框，并删除它之后的全部内容，等待编辑后重新发送。 */
+    private void editAndResend(ChatMessage message) {
+        if (sending) {
+            toast("正在生成回复，请先停止");
+            return;
+        }
+        int index = messages.indexOf(message);
+        if (index < 0) {
+            return;
+        }
+        String text = message.getText();
+        while (messages.size() > index) {
+            messages.remove(messages.size() - 1);
+        }
+        adapter.notifyDataSetChanged();
+        persistConversations();
+        refreshUsageSummary();
+
+        input.setText(text);
+        input.setSelection(input.getText().length());
+        input.requestFocus();
+        InputMethodManager manager =
+                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (manager != null) {
+            manager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        }
+        toast("已回填到输入框，编辑后点击发送");
     }
 
     @Override
@@ -535,6 +639,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
         messages.remove(message);
         adapter.notifyDataSetChanged();
+        refreshUsageSummary();
         persistConversations();
     }
 
@@ -632,6 +737,22 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
     }
 
+    private void onStreamReasoning(String piece) {
+        synchronized (reasoningBuffer) {
+            reasoningBuffer.append(piece);
+        }
+        if (!streamRefreshScheduled) {
+            streamRefreshScheduled = true;
+            handler.postDelayed(streamRefreshRunnable, STREAM_REFRESH_MS);
+        }
+    }
+
+    private String snapshotReasoning() {
+        synchronized (reasoningBuffer) {
+            return reasoningBuffer.toString();
+        }
+    }
+
     private void finishStream(final String error, final String reply, final String finishReason,
                               final boolean cancelled) {
         handler.post(new Runnable() {
@@ -679,6 +800,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 // 续写时把已有内容拼在增量前面
                 boolean truncated = "length".equals(finishReason) && error == null && !cancelled;
                 String combined = prefix + text;
+                ChatMessage finished = target;
                 if (combined.trim().length() > 0) {
                     if (target != null) {
                         target.setText(combined);
@@ -688,15 +810,25 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                                 new ChatMessage(ChatMessage.ROLE_ASSISTANT, combined);
                         created.setTruncated(truncated);
                         messages.add(created);
+                        finished = created;
                     }
                 } else if (truncated && target != null) {
                     target.setTruncated(true);
+                }
+                if (finished != null) {
+                    String reasoning = snapshotReasoning();
+                    if (reasoning.trim().length() > 0) {
+                        finished.setReasoning(reasoning);
+                    }
+                    finished.setPromptTokens(streamPromptTokens);
+                    finished.setCompletionTokens(streamCompletionTokens);
                 }
 
                 adapter.notifyDataSetChanged();
                 if (atBottom) {
                     scrollToBottom();
                 }
+                refreshUsageSummary();
                 persistConversations();
             }
         });
@@ -773,20 +905,6 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
     }
 
-    private void copyMessage(int position) {
-        if (position < 0 || position >= messages.size()) {
-            return;
-        }
-        ChatMessage message = messages.get(position);
-        String text = message.getText();
-        if (message.getAttachmentName() != null) {
-            text = text + "\n\n附件：" + message.getAttachmentName();
-        }
-        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("message", text));
-        toast("已复制到剪贴板");
-    }
-
     // ======================== 抽屉与多对话管理 ========================
 
     private void openDrawer() {
@@ -794,11 +912,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             return;
         }
         drawerOpen = true;
-        conversationAdapter.setCurrentId(current.getId());
-        conversationAdapter.notifyDataSetChanged();
+        refreshConversationList();
         int width = drawerPanel.getWidth();
         if (width <= 0) {
-            width = (int) (286 * getResources().getDisplayMetrics().density);
+            width = (int) (300 * getResources().getDisplayMetrics().density);
         }
         drawerPanel.setTranslationX(-width);
         drawerPanel.setVisibility(View.VISIBLE);
@@ -814,7 +931,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
         drawerOpen = false;
         float width = drawerPanel.getWidth() > 0 ? drawerPanel.getWidth()
-                : 286 * getResources().getDisplayMetrics().density;
+                : 300 * getResources().getDisplayMetrics().density;
         drawerPanel.animate().translationX(-width).setDuration(200)
                 .withEndAction(new Runnable() {
                     @Override
@@ -853,26 +970,30 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             closeDrawer();
             return;
         }
+        saveDraft();
         saveCurrentConversation();
         store.saveConversation(current);
         Conversation conversation = Conversation.create();
         conversations.add(0, conversation);
         current = conversation;
         store.saveConversation(current);
+        sortConversations();
         Prefs.setCurrentConversationId(this, current.getId());
         messages.clear();
         adapter.notifyDataSetChanged();
         clearAttachment();
-        conversationAdapter.setCurrentId(current.getId());
-        conversationAdapter.notifyDataSetChanged();
+        input.setText("");
+        drawerSearch.setText("");
+        refreshConversationList();
+        refreshUsageSummary();
         closeDrawer();
     }
 
     private void switchConversation(int position) {
-        if (position < 0 || position >= conversations.size()) {
+        if (position < 0 || position >= visibleConversations.size()) {
             return;
         }
-        Conversation target = conversations.get(position);
+        Conversation target = visibleConversations.get(position);
         if (target == current) {
             closeDrawer();
             return;
@@ -881,6 +1002,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             toast("请先点击「停止」结束当前回复");
             return;
         }
+        saveDraft();
         saveCurrentConversation();
         store.saveConversation(current);
         current = target;
@@ -892,29 +1014,135 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         messages.addAll(current.getMessages());
         adapter.notifyDataSetChanged();
         clearAttachment();
+        // 恢复该会话上次未发送的草稿
+        input.setText(Prefs.getDraft(this, current.getId()));
+        if (input.getText().length() > 0) {
+            input.setSelection(input.getText().length());
+        }
+        refreshConversationList();
+        refreshUsageSummary();
         scrollToBottom();
         closeDrawer();
     }
 
     private void conversationMenu(final int position) {
-        if (position < 0 || position >= conversations.size()) {
+        if (position < 0 || position >= visibleConversations.size()) {
             return;
         }
-        final Conversation conversation = conversations.get(position);
-        String[] items = new String[]{"重命名", "删除"};
+        final Conversation conversation = visibleConversations.get(position);
+        final List<String> items = new ArrayList<String>();
+        items.add(conversation.isPinned() ? "取消置顶" : "置顶会话");
+        items.add("重命名");
+        items.add("清空消息");
+        items.add("删除");
+
         new AlertDialog.Builder(this)
                 .setTitle(conversation.getDisplayTitle())
-                .setItems(items, new DialogInterface.OnClickListener() {
+                .setItems(items.toArray(new String[0]), new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         if (which == 0) {
+                            togglePin(conversation);
+                        } else if (which == 1) {
                             renameConversation(conversation);
+                        } else if (which == 2) {
+                            confirmClearConversation(conversation);
                         } else {
                             deleteConversation(conversation);
                         }
                     }
                 })
                 .show();
+    }
+
+    /** 置顶 / 取消置顶，并重新排序抽屉列表。 */
+    private void togglePin(Conversation conversation) {
+        conversation.setPinned(!conversation.isPinned());
+        store.updateConversationMeta(conversation);
+        sortConversations();
+        refreshConversationList();
+        toast(conversation.isPinned() ? "已置顶" : "已取消置顶");
+    }
+
+    private void confirmClearConversation(final Conversation conversation) {
+        if (sending) {
+            toast("请先点击「停止」结束当前回复");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("清空消息")
+                .setMessage("确定清空「" + conversation.getDisplayTitle()
+                        + "」中的全部消息吗？会话本身会保留。")
+                .setPositiveButton("清空", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        clearConversation(conversation);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void clearConversation(Conversation conversation) {
+        conversation.setMessages(new ArrayList<ChatMessage>());
+        conversation.setStoredSummary("", 0);
+        conversation.setUpdatedAt(System.currentTimeMillis());
+        store.clearMessages(conversation.getId());
+        store.updateConversationMeta(conversation);
+        if (conversation == current) {
+            messages.clear();
+            adapter.notifyDataSetChanged();
+            Prefs.setDraft(this, conversation.getId(), "");
+            refreshUsageSummary();
+        }
+        sortConversations();
+        refreshConversationList();
+        toast("已清空该会话");
+    }
+
+    /** 输入框内容按会话保存为草稿。 */
+    private void saveDraft() {
+        if (current == null) {
+            return;
+        }
+        Prefs.setDraft(this, current.getId(), input.getText().toString());
+    }
+
+    /** 按搜索关键词重建抽屉列表。 */
+    private void refreshConversationList() {
+        if (conversationAdapter == null) {
+            return;
+        }
+        String keyword = drawerSearch == null ? "" : drawerSearch.getText().toString().trim();
+        visibleConversations.clear();
+        if (keyword.length() == 0) {
+            visibleConversations.addAll(conversations);
+        } else {
+            Set<String> ids = store.searchConversationIds(keyword);
+            for (Conversation conversation : conversations) {
+                if (ids.contains(conversation.getId())) {
+                    visibleConversations.add(conversation);
+                }
+            }
+        }
+        conversationAdapter.setCurrentId(current == null ? "" : current.getId());
+        conversationAdapter.notifyDataSetChanged();
+    }
+
+    /** 置顶优先，其次按最近更新时间排序。 */
+    private void sortConversations() {
+        Collections.sort(conversations, new Comparator<Conversation>() {
+            @Override
+            public int compare(Conversation left, Conversation right) {
+                if (left.isPinned() != right.isPinned()) {
+                    return left.isPinned() ? -1 : 1;
+                }
+                if (left.getUpdatedAt() == right.getUpdatedAt()) {
+                    return 0;
+                }
+                return left.getUpdatedAt() > right.getUpdatedAt() ? -1 : 1;
+            }
+        });
     }
 
     private void renameConversation(final Conversation conversation) {
@@ -973,16 +1201,88 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                             messages.addAll(current.getMessages());
                             adapter.notifyDataSetChanged();
                             Prefs.setCurrentConversationId(MainActivity.this, current.getId());
+                            input.setText(Prefs.getDraft(MainActivity.this, current.getId()));
                         } else {
                             saveCurrentConversation();
                             store.saveConversation(current);
                         }
-                        conversationAdapter.setCurrentId(current.getId());
-                        conversationAdapter.notifyDataSetChanged();
+                        refreshConversationList();
+                        refreshUsageSummary();
                     }
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /** 统计当前会话累计 tokens 并按设置单价估算费用。 */
+    private void refreshUsageSummary() {
+        if (usageSummary == null) {
+            return;
+        }
+        int prompt = 0;
+        int completion = 0;
+        for (ChatMessage message : messages) {
+            prompt += message.getPromptTokens();
+            completion += message.getCompletionTokens();
+        }
+        int total = prompt + completion;
+        if (total <= 0) {
+            usageSummary.setText("本会话暂无 token 用量");
+            return;
+        }
+        double cost = prompt / 1000000d * Prefs.getInputPrice(this)
+                + completion / 1000000d * Prefs.getOutputPrice(this);
+        usageSummary.setText("本会话 " + formatTokens(total) + " tokens · 约 ¥"
+                + formatCost(cost));
+    }
+
+    private void showUsageDialog() {
+        int prompt = 0;
+        int completion = 0;
+        for (ChatMessage message : messages) {
+            prompt += message.getPromptTokens();
+            completion += message.getCompletionTokens();
+        }
+        double inputPrice = Prefs.getInputPrice(this);
+        double outputPrice = Prefs.getOutputPrice(this);
+        double cost = prompt / 1000000d * inputPrice + completion / 1000000d * outputPrice;
+        StringBuilder builder = new StringBuilder();
+        builder.append("本会话累计：").append(formatTokens(prompt + completion)).append(" tokens\n");
+        builder.append("· 输入：").append(formatTokens(prompt)).append(" tokens（¥")
+                .append(trimPrice(inputPrice)).append(" / 百万）\n");
+        builder.append("· 输出：").append(formatTokens(completion)).append(" tokens（¥")
+                .append(trimPrice(outputPrice)).append(" / 百万）\n");
+        builder.append("· 估算费用：约 ¥").append(formatCost(cost)).append("\n\n");
+        builder.append("说明：\n");
+        builder.append("1. 用量来自接口返回的 usage 字段，仅统计本会话当前加载的消息。\n");
+        builder.append("2. 每条回复的输入 token 都包含其上下文，因此多轮对话的输入量会重复累计。\n");
+        builder.append("3. 单价可在「设置 - 接口设置 - 费用估算」中修改，实际扣费以服务商账单为准。");
+        new AlertDialog.Builder(this)
+                .setTitle("Token 用量与费用")
+                .setMessage(builder.toString())
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    private static String formatTokens(int value) {
+        return String.format(Locale.US, "%,d", value);
+    }
+
+    private static String formatCost(double cost) {
+        if (cost <= 0) {
+            return "0";
+        }
+        if (cost < 0.0001) {
+            return "<0.0001";
+        }
+        return String.format(Locale.US, "%.4f", cost);
+    }
+
+    private static String trimPrice(double value) {
+        if (value == Math.floor(value)) {
+            return String.valueOf((long) value);
+        }
+        return String.valueOf(value);
     }
 
     private void saveCurrentConversation() {
@@ -1019,7 +1319,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private void setBusy(boolean busy) {
         // 生成过程中「发送」变为「停止」，保持可点击
         sendButton.setEnabled(true);
-        sendButton.setText(busy ? "停止" : "发送");
+        sendButton.setText(busy ? "■" : "↑");
+        sendButton.setTextSize(busy ? 15 : 20);
         attachButton.setEnabled(!busy);
         attachButton.setAlpha(busy ? 0.5f : 1.0f);
     }

@@ -8,37 +8,30 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="52dp"
-        android:background="@color/surface"
+        android:background="@color/top_bar"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingLeft="8dp"
         android:paddingRight="16dp">
 
         <TextView
             android:id="@+id/back_button"
-            android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/bg_row_ripple"
             android:gravity="center"
-            android:paddingLeft="8dp"
-            android:paddingRight="14dp"
-            android:text="‹ 返回"
-            android:textColor="@color/brand"
-            android:textSize="15sp" />
+            android:text="‹"
+            android:textColor="@color/top_bar_text"
+            android:textSize="26sp" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="接口设置"
-            android:textColor="@color/text_primary"
-            android:textSize="17sp"
+            android:textColor="@color/top_bar_text"
+            android:textSize="18sp"
             android:textStyle="bold" />
     </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/divider" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -52,135 +45,186 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingBottom="28dp"
-            android:paddingLeft="18dp"
-            android:paddingRight="18dp">
+            android:paddingLeft="14dp"
+            android:paddingRight="14dp">
 
             <TextView
                 style="@style/SectionTitle"
-                android:text="接口设置" />
+                android:text="基础接口" />
 
-            <TextView
-                style="@style/FieldLabel"
-                android:text="API Key（必填）" />
-
-            <EditText
-                android:id="@+id/api_key_input"
-                style="@style/FieldInput"
-                android:hint="sk-..."
-                android:inputType="textVisiblePassword" />
-
-            <TextView
-                style="@style/FieldLabel"
-                android:text="接口地址" />
-
-            <EditText
-                android:id="@+id/base_url_input"
-                style="@style/FieldInput"
-                android:hint="https://api.deepseek.com"
-                android:inputType="textUri" />
-
-            <TextView
-                style="@style/FieldHint"
-                android:text="默认使用 DeepSeek 官方接口，一般无需修改。兼容 OpenAI 格式的第三方接口也可填写。" />
-
-            <TextView
-                style="@style/FieldLabel"
-                android:text="对话模型" />
-
-            <EditText
-                android:id="@+id/chat_model_input"
-                style="@style/FieldInput"
-                android:hint="deepseek-chat"
-                android:inputType="text" />
-
-            <TextView
-                style="@style/FieldLabel"
-                android:text="最大回复长度（tokens）" />
-
-            <EditText
-                android:id="@+id/max_tokens_input"
-                style="@style/FieldInput"
-                android:hint="0 表示不限制"
-                android:inputType="number" />
-
-            <TextView
-                style="@style/FieldHint"
-                android:text="留空或填 0 使用接口默认上限；设置较小值可避免生成过长内容。" />
-
-            <TextView
-                style="@style/FieldLabel"
-                android:text="上下文保留条数" />
-
-            <EditText
-                android:id="@+id/context_messages_input"
-                style="@style/FieldInput"
-                android:hint="20"
-                android:inputType="number" />
-
-            <TextView
-                style="@style/FieldHint"
-                android:text="每次请求只携带最近这么多条历史消息，0 表示不限制条数（仍有总字数上限）。减少该值可加快响应、节省费用。" />
-
-            <View
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="22dp"
-                android:background="@color/divider" />
+                android:layout_height="wrap_content"
+                android:background="@color/surface"
+                android:orientation="vertical"
+                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="API Key（必填，加密保存）" />
+
+                <EditText
+                    android:id="@+id/api_key_input"
+                    style="@style/FieldInput"
+                    android:hint="sk-..."
+                    android:inputType="textVisiblePassword" />
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="接口地址" />
+
+                <EditText
+                    android:id="@+id/base_url_input"
+                    style="@style/FieldInput"
+                    android:hint="https://api.deepseek.com"
+                    android:inputType="textUri" />
+
+                <TextView
+                    style="@style/FieldHint"
+                    android:text="默认使用 DeepSeek 官方接口。兼容 OpenAI chat/completions 格式的第三方接口也可填写。" />
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="对话模型" />
+
+                <EditText
+                    android:id="@+id/chat_model_input"
+                    style="@style/FieldInput"
+                    android:hint="deepseek-chat"
+                    android:inputType="text" />
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="最大回复长度（tokens）" />
+
+                <EditText
+                    android:id="@+id/max_tokens_input"
+                    style="@style/FieldInput"
+                    android:hint="0 表示不限制"
+                    android:inputType="number" />
+
+                <TextView
+                    style="@style/FieldHint"
+                    android:text="留空或填 0 使用接口默认上限。" />
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="上下文保留条数" />
+
+                <EditText
+                    android:id="@+id/context_messages_input"
+                    style="@style/FieldInput"
+                    android:hint="20"
+                    android:inputType="number" />
+
+                <TextView
+                    style="@style/FieldHint"
+                    android:text="每次请求只携带最近这么多条历史消息，0 表示不限制条数（仍有总字数上限）。" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/SectionTitle"
+                android:text="费用估算" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@color/surface"
+                android:orientation="vertical"
+                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="输入单价（元 / 百万 tokens）" />
+
+                <EditText
+                    android:id="@+id/price_input_input"
+                    style="@style/FieldInput"
+                    android:hint="2"
+                    android:inputType="numberDecimal" />
+
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="输出单价（元 / 百万 tokens）" />
+
+                <EditText
+                    android:id="@+id/price_output_input"
+                    style="@style/FieldInput"
+                    android:hint="8"
+                    android:inputType="numberDecimal" />
+
+                <TextView
+                    style="@style/FieldHint"
+                    android:text="默认按 deepseek-chat 的 ¥2 / ¥8 估算。抽屉底部的会话用量与费用仅作参考，实际以服务商账单为准。" />
+            </LinearLayout>
 
             <TextView
                 style="@style/SectionTitle"
                 android:text="图片分析" />
 
-            <TextView
-                style="@style/FieldHint"
-                android:paddingTop="0dp"
-                android:text="DeepSeek 官方接口已支持图片理解，图片会自动使用 deepseek-flash 模型，无需额外配置。也可填写兼容 OpenAI chat/completions 格式的第三方视觉接口，留空则复用上方接口与 Key。" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@color/surface"
+                android:orientation="vertical"
+                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
+                android:paddingBottom="12dp">
 
-            <TextView
-                style="@style/FieldLabel"
-                android:text="图片接口地址（留空使用 DeepSeek）" />
+                <TextView
+                    style="@style/FieldHint"
+                    android:paddingTop="12dp"
+                    android:text="DeepSeek 官方接口已支持图片理解，图片会自动使用 deepseek-flash 模型，无需额外配置。也可填写兼容 OpenAI chat/completions 格式的第三方视觉接口，留空则复用上方接口与 Key。" />
 
-            <EditText
-                android:id="@+id/vision_base_url_input"
-                style="@style/FieldInput"
-                android:hint="例如 https://api.siliconflow.cn/v1"
-                android:inputType="textUri" />
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="图片接口地址（留空使用 DeepSeek）" />
 
-            <TextView
-                style="@style/FieldLabel"
-                android:text="视觉模型名称（留空自动选择）" />
+                <EditText
+                    android:id="@+id/vision_base_url_input"
+                    style="@style/FieldInput"
+                    android:hint="例如 https://api.siliconflow.cn/v1"
+                    android:inputType="textUri" />
 
-            <EditText
-                android:id="@+id/vision_model_input"
-                style="@style/FieldInput"
-                android:hint="DeepSeek 默认 deepseek-flash"
-                android:inputType="text" />
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="视觉模型名称（留空自动选择）" />
 
-            <TextView
-                style="@style/FieldLabel"
-                android:text="图片接口 Key（留空复用上方）" />
+                <EditText
+                    android:id="@+id/vision_model_input"
+                    style="@style/FieldInput"
+                    android:hint="DeepSeek 默认 deepseek-flash"
+                    android:inputType="text" />
 
-            <EditText
-                android:id="@+id/vision_key_input"
-                style="@style/FieldInput"
-                android:hint="留空则使用上方 API Key"
-                android:inputType="textVisiblePassword" />
+                <TextView
+                    style="@style/FieldLabel"
+                    android:text="图片接口 Key（留空复用上方）" />
+
+                <EditText
+                    android:id="@+id/vision_key_input"
+                    style="@style/FieldInput"
+                    android:hint="留空则使用上方 API Key"
+                    android:inputType="textVisiblePassword" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/save_button"
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
-                android:layout_marginTop="26dp"
+                android:layout_marginTop="22dp"
                 android:background="@drawable/bg_button_primary"
                 android:gravity="center"
                 android:text="保存接口设置"
                 android:textColor="@color/white"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:textSize="15sp" />
 
             <TextView
                 style="@style/FieldHint"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="14dp"
                 android:text="@string/settings_note" />
 
         </LinearLayout>

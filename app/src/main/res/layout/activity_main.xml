@@ -9,38 +9,48 @@
         android:background="@color/bg_page"
         android:orientation="vertical">
 
+        <!-- 扁平顶栏：纯色 + 白色图标，Android 5.0 风格 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:background="@color/surface"
+            android:background="@color/top_bar"
             android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingLeft="16dp"
-            android:paddingRight="8dp">
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/drawer_button"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_row_ripple"
+                android:contentDescription="打开会话列表"
+                android:gravity="center"
+                android:text="☰"
+                android:textColor="@color/top_bar_text"
+                android:textSize="21sp" />
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="AI 对话助手"
-                android:textColor="@color/text_primary"
+                android:ellipsize="end"
+                android:paddingLeft="4dp"
+                android:singleLine="true"
+                android:text="@string/app_name"
+                android:textColor="@color/top_bar_text"
                 android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/drawer_button"
-                android:layout_width="44dp"
-                android:layout_height="40dp"
+                android:id="@+id/top_new_button"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_row_ripple"
+                android:contentDescription="新建对话"
                 android:gravity="center"
-                android:text="☰"
-                android:textColor="@color/brand"
-                android:textSize="20sp" />
+                android:text="＋"
+                android:textColor="@color/top_bar_text"
+                android:textSize="24sp" />
         </LinearLayout>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@color/divider" />
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -197,6 +207,7 @@
             android:layout_height="1dp"
             android:background="@color/divider" />
 
+        <!-- 扁平输入区：附件 + 输入框 + 圆形发送 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -214,8 +225,8 @@
                 android:layout_height="44dp"
                 android:background="@drawable/bg_chip"
                 android:gravity="center"
-                android:paddingLeft="13dp"
-                android:paddingRight="13dp"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"
                 android:text="附件"
                 android:textColor="@color/text_primary"
                 android:textSize="13sp" />
@@ -233,8 +244,8 @@
                 android:maxLines="5"
                 android:minHeight="44dp"
                 android:paddingBottom="10dp"
-                android:paddingLeft="14dp"
-                android:paddingRight="14dp"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"
                 android:paddingTop="10dp"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_hint"
@@ -242,16 +253,15 @@
 
             <TextView
                 android:id="@+id/send_button"
-                android:layout_width="wrap_content"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
                 android:layout_marginLeft="8dp"
-                android:background="@drawable/bg_button_primary"
+                android:background="@drawable/bg_send_circle"
+                android:contentDescription="发送"
                 android:gravity="center"
-                android:paddingLeft="18dp"
-                android:paddingRight="18dp"
-                android:text="发送"
+                android:text="↑"
                 android:textColor="@color/white"
-                android:textSize="14sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
@@ -266,7 +276,7 @@
 
     <LinearLayout
         android:id="@+id/drawer_panel"
-        android:layout_width="286dp"
+        android:layout_width="300dp"
         android:layout_height="match_parent"
         android:background="@color/surface"
         android:orientation="vertical"
@@ -275,6 +285,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="52dp"
+            android:background="@color/top_bar"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingLeft="16dp"
@@ -285,26 +296,39 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="对话"
-                android:textColor="@color/text_primary"
+                android:textColor="@color/top_bar_text"
                 android:textSize="17sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/new_conversation_button"
                 android:layout_width="wrap_content"
-                android:layout_height="38dp"
+                android:layout_height="40dp"
                 android:gravity="center"
                 android:paddingLeft="10dp"
                 android:paddingRight="10dp"
                 android:text="＋ 新建"
-                android:textColor="@color/brand"
+                android:textColor="@color/top_bar_text"
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <View
+        <EditText
+            android:id="@+id/drawer_search"
             android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@color/divider" />
+            android:layout_height="38dp"
+            android:layout_marginBottom="6dp"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_search"
+            android:hint="搜索对话或消息"
+            android:inputType="text"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:singleLine="true"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
+            android:textSize="13sp" />
 
         <ListView
             android:id="@+id/conversation_list"
@@ -312,11 +336,29 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:cacheColorHint="#00000000"
-            android:divider="@null"
-            android:dividerHeight="0dp"
-            android:paddingBottom="6dp"
-            android:paddingTop="6dp"
+            android:divider="@color/divider"
+            android:dividerHeight="1dp"
+            android:paddingBottom="2dp"
+            android:paddingTop="2dp"
             android:scrollbars="none" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/divider" />
+
+        <TextView
+            android:id="@+id/usage_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_row_ripple"
+            android:paddingBottom="10dp"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp"
+            android:paddingTop="10dp"
+            android:text="本会话暂无 token 用量"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp" />
 
         <View
             android:layout_width="match_parent"
@@ -325,28 +367,24 @@
 
         <LinearLayout
             android:id="@+id/drawer_settings_button"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingLeft="16dp"
-            android:paddingRight="16dp">
+            style="@style/SettingsRow"
+            android:layout_height="52dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="⚙"
-                android:textColor="@color/text_secondary"
-                android:textSize="16sp" />
+                android:text="设置"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginLeft="10dp"
                 android:layout_weight="1"
-                android:text="设置"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:text="接口、模型与费用单价"
+                android:textColor="@color/text_hint"
+                android:textSize="11sp" />
 
             <TextView
                 android:layout_width="wrap_content"
