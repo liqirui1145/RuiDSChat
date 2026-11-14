@@ -10,13 +10,17 @@ import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.style.StrikethroughSpan;
 import android.text.style.StyleSpan;
+import android.text.style.SubscriptSpan;
+import android.text.style.SuperscriptSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.UnderlineSpan;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 轻量 Markdown 渲染器：把 AI 回复里的 Markdown 语法转成 Spannable。
@@ -94,6 +98,10 @@ public final class MarkdownRenderer {
                     appendDisplayMath(out, display.toString(), colors);
                     inDisplay = false;
                     display.setLength(0);
+                    String rest = line.substring(close + displayClose.length()).trim();
+                    if (rest.length() > 0) {
+                        appendBlockLine(out, rest, colors);
+                    }
                 } else {
                     display.append(' ').append(line);
                 }
@@ -105,6 +113,10 @@ public final class MarkdownRenderer {
                 int close = content.indexOf(closer);
                 if (close >= 0) {
                     appendDisplayMath(out, content.substring(0, close), colors);
+                    String rest = content.substring(close + closer.length()).trim();
+                    if (rest.length() > 0) {
+                        appendBlockLine(out, rest, colors);
+                    }
                 } else {
                     inDisplay = true;
                     displayClose = closer;
@@ -112,6 +124,32 @@ public final class MarkdownRenderer {
                     display.append(content);
                 }
                 continue;
+            }
+
+            // 未加 $ 定界符的公式环境，例如 AI 直接输出的 \begin{aligned}...\end{aligned}
+            if (trimmed.startsWith("\\begin{")) {
+                String env = environmentName(trimmed);
+                if (isMathEnvironment(env)) {
+                    String endTag = "\\end{" + env + "}";
+                    int closeLine = trimmed.indexOf(endTag) >= 0 ? i : -1;
+                    int next = i + 1;
+                    while (closeLine < 0 && next < lines.length) {
+                        if (lines[next].indexOf(endTag) >= 0) {
+                            closeLine = next;
+                        }
+                        next++;
+                    }
+                    // 找不到 \end 就不当成公式，避免把后续正文全部吞掉
+                    if (closeLine >= 0) {
+                        StringBuilder math = new StringBuilder(trimmed);
+                        for (int k = i + 1; k <= closeLine; k++) {
+                            math.append('\n').append(lines[k]);
+                        }
+                        appendDisplayMath(out, math.toString(), colors);
+                        i = closeLine;
+                        continue;
+                    }
+                }
             }
 
             // 表格：当前行像表头，且下一行是 |---|---| 分隔行
@@ -414,6 +452,14 @@ public final class MarkdownRenderer {
         int i = 0;
         while (i < s.length()) {
             char c = s.charAt(i);
+            if (c == '$') {
+                int end = s.indexOf('$', i + 1);
+                if (end > i + 1) {
+                    sb.append(plainMath(latexToText(s.substring(i + 1, end))));
+                    i = end + 1;
+                    continue;
+                }
+            }
             if (c == '[') {
                 int close = s.indexOf(']', i + 1);
                 if (close > i + 1 && close + 1 < s.length() && s.charAt(close + 1) == '(') {
@@ -553,10 +599,31 @@ public final class MarkdownRenderer {
 
     // ======================== LaTeX 数学公式 ========================
 
+    /*
+     * 转换分两步：先把 LaTeX 转成「带标记的文本」，再把标记还原成 Span。
+     * 标记用 \u0001..\u0008、\u000b、\u000c 等不会出现在正文里的控制字符，
+     * 这样 x^{n+1}、\lim_{x \to 0} 这类 Unicode 上下标表示不了的内容
+     * 也能用真正的上标 / 下标 Span 正确显示。
+     */
+    private static final char M_SUP = '\u0001';
+    private static final char M_SUP_END = '\u0002';
+    private static final char M_SUB = '\u0003';
+    private static final char M_SUB_END = '\u0004';
+    private static final char M_UP = '\u0005';
+    private static final char M_UP_END = '\u0006';
+    private static final char M_BOLD = '\u0007';
+    private static final char M_BOLD_END = '\u0008';
+    private static final char M_UL = '\u000b';
+    private static final char M_UL_END = '\u000c';
+
     private static final Map<String, String> LATEX_SYMBOLS = new HashMap<String, String>();
     private static final Map<Character, String> SUP_SCRIPTS = new HashMap<Character, String>();
     private static final Map<Character, String> SUB_SCRIPTS = new HashMap<Character, String>();
     private static final Map<Character, String> DOUBLE_STRUCK = new HashMap<Character, String>();
+    private static final Map<Character, String> MATHCAL = new HashMap<Character, String>();
+    private static final Set<String> LATEX_FUNCTIONS = new HashSet<String>();
+    private static final Set<String> IGNORED_COMMANDS = new HashSet<String>();
+    private static final Set<String> MATH_ENVIRONMENTS = new HashSet<String>();
 
     static {
         // 希腊字母
@@ -831,42 +898,426 @@ public final class MarkdownRenderer {
         DOUBLE_STRUCK.put('W', "𝕎");
         DOUBLE_STRUCK.put('X', "𝕏");
         DOUBLE_STRUCK.put('Y', "𝕐");
+
+        // 补充：常用箭头 / 关系 / 运算符
+        LATEX_SYMBOLS.put("longrightarrow", "⟶");
+        LATEX_SYMBOLS.put("longleftarrow", "⟵");
+        LATEX_SYMBOLS.put("longleftrightarrow", "⟷");
+        LATEX_SYMBOLS.put("Longrightarrow", "⟹");
+        LATEX_SYMBOLS.put("Longleftarrow", "⟸");
+        LATEX_SYMBOLS.put("Longleftrightarrow", "⟺");
+        LATEX_SYMBOLS.put("impliedby", "⟸");
+        LATEX_SYMBOLS.put("hookrightarrow", "↪");
+        LATEX_SYMBOLS.put("hookleftarrow", "↩");
+        LATEX_SYMBOLS.put("twoheadrightarrow", "↠");
+        LATEX_SYMBOLS.put("twoheadleftarrow", "↞");
+        LATEX_SYMBOLS.put("nearrow", "↗");
+        LATEX_SYMBOLS.put("searrow", "↘");
+        LATEX_SYMBOLS.put("swarrow", "↙");
+        LATEX_SYMBOLS.put("nwarrow", "↖");
+        LATEX_SYMBOLS.put("rightleftharpoons", "⇌");
+        LATEX_SYMBOLS.put("leftrightharpoons", "⇋");
+        LATEX_SYMBOLS.put("rightharpoonup", "⇀");
+        LATEX_SYMBOLS.put("rightharpoondown", "⇁");
+        LATEX_SYMBOLS.put("leadsto", "↝");
+        LATEX_SYMBOLS.put("rightsquigarrow", "↝");
+        LATEX_SYMBOLS.put("dashrightarrow", "⇢");
+        LATEX_SYMBOLS.put("dashleftarrow", "⇠");
+        LATEX_SYMBOLS.put("circlearrowleft", "↺");
+        LATEX_SYMBOLS.put("circlearrowright", "↻");
+        LATEX_SYMBOLS.put("leqslant", "⩽");
+        LATEX_SYMBOLS.put("geqslant", "⩾");
+        LATEX_SYMBOLS.put("nleq", "≰");
+        LATEX_SYMBOLS.put("ngeq", "≱");
+        LATEX_SYMBOLS.put("nless", "≮");
+        LATEX_SYMBOLS.put("ngtr", "≯");
+        LATEX_SYMBOLS.put("lesssim", "≲");
+        LATEX_SYMBOLS.put("gtrsim", "≳");
+        LATEX_SYMBOLS.put("lessgtr", "≶");
+        LATEX_SYMBOLS.put("greaterless", "≷");
+        LATEX_SYMBOLS.put("doteq", "≐");
+        LATEX_SYMBOLS.put("asymp", "≍");
+        LATEX_SYMBOLS.put("bowtie", "⋈");
+        LATEX_SYMBOLS.put("models", "⊨");
+        LATEX_SYMBOLS.put("vdash", "⊢");
+        LATEX_SYMBOLS.put("dashv", "⊣");
+        LATEX_SYMBOLS.put("top", "⊤");
+        LATEX_SYMBOLS.put("bot", "⊥");
+        LATEX_SYMBOLS.put("triangleq", "≜");
+        LATEX_SYMBOLS.put("eqqcolon", "≕");
+        LATEX_SYMBOLS.put("coloneqq", "≔");
+        LATEX_SYMBOLS.put("coloneq", "≔");
+        LATEX_SYMBOLS.put("prec", "≺");
+        LATEX_SYMBOLS.put("succ", "≻");
+        LATEX_SYMBOLS.put("preceq", "⪯");
+        LATEX_SYMBOLS.put("succeq", "⪰");
+        LATEX_SYMBOLS.put("subsetneq", "⊊");
+        LATEX_SYMBOLS.put("supsetneq", "⊋");
+        LATEX_SYMBOLS.put("sqsubset", "⊏");
+        LATEX_SYMBOLS.put("sqsupset", "⊐");
+        LATEX_SYMBOLS.put("sqsubseteq", "⊑");
+        LATEX_SYMBOLS.put("sqsupseteq", "⊒");
+        LATEX_SYMBOLS.put("nsubseteq", "⊈");
+        LATEX_SYMBOLS.put("nsupseteq", "⊉");
+        LATEX_SYMBOLS.put("nparallel", "∦");
+        LATEX_SYMBOLS.put("nmid", "∤");
+        LATEX_SYMBOLS.put("varpropto", "∝");
+        LATEX_SYMBOLS.put("ominus", "⊖");
+        LATEX_SYMBOLS.put("oslash", "⊘");
+        LATEX_SYMBOLS.put("uplus", "⊎");
+        LATEX_SYMBOLS.put("sqcup", "⊔");
+        LATEX_SYMBOLS.put("sqcap", "⊓");
+        LATEX_SYMBOLS.put("amalg", "⨿");
+        LATEX_SYMBOLS.put("wr", "≀");
+        LATEX_SYMBOLS.put("diamond", "⋄");
+        LATEX_SYMBOLS.put("bigtriangleup", "△");
+        LATEX_SYMBOLS.put("bigtriangledown", "▽");
+        LATEX_SYMBOLS.put("triangleleft", "◁");
+        LATEX_SYMBOLS.put("triangleright", "▷");
+        LATEX_SYMBOLS.put("bigoplus", "⨁");
+        LATEX_SYMBOLS.put("bigotimes", "⨂");
+        LATEX_SYMBOLS.put("bigodot", "⨀");
+        LATEX_SYMBOLS.put("bigsqcup", "⨆");
+        LATEX_SYMBOLS.put("bigvee", "⋁");
+        LATEX_SYMBOLS.put("bigwedge", "⋀");
+        LATEX_SYMBOLS.put("biguplus", "⨄");
+        LATEX_SYMBOLS.put("iiiint", "⨌");
+        LATEX_SYMBOLS.put("oiint", "∯");
+        LATEX_SYMBOLS.put("Re", "ℜ");
+        LATEX_SYMBOLS.put("Im", "ℑ");
+        LATEX_SYMBOLS.put("beth", "ℶ");
+        LATEX_SYMBOLS.put("gimel", "ℷ");
+        LATEX_SYMBOLS.put("daleth", "ℸ");
+        LATEX_SYMBOLS.put("complement", "∁");
+        LATEX_SYMBOLS.put("surd", "√");
+        LATEX_SYMBOLS.put("measuredangle", "∡");
+        LATEX_SYMBOLS.put("sphericalangle", "∢");
+        LATEX_SYMBOLS.put("lozenge", "◊");
+        LATEX_SYMBOLS.put("blacklozenge", "◆");
+        LATEX_SYMBOLS.put("bigstar", "★");
+        LATEX_SYMBOLS.put("backsimeq", "⋍");
+        LATEX_SYMBOLS.put("clubsuit", "♣");
+        LATEX_SYMBOLS.put("diamondsuit", "♢");
+        LATEX_SYMBOLS.put("heartsuit", "♡");
+        LATEX_SYMBOLS.put("spadesuit", "♠");
+        LATEX_SYMBOLS.put("flat", "♭");
+        LATEX_SYMBOLS.put("natural", "♮");
+        LATEX_SYMBOLS.put("sharp", "♯");
+        LATEX_SYMBOLS.put("backslash", "\\");
+        LATEX_SYMBOLS.put("vert", "|");
+        LATEX_SYMBOLS.put("Vert", "‖");
+        LATEX_SYMBOLS.put("lvert", "|");
+        LATEX_SYMBOLS.put("rvert", "|");
+        LATEX_SYMBOLS.put("lVert", "‖");
+        LATEX_SYMBOLS.put("rVert", "‖");
+        LATEX_SYMBOLS.put("ulcorner", "⌜");
+        LATEX_SYMBOLS.put("urcorner", "⌝");
+        LATEX_SYMBOLS.put("llcorner", "⌞");
+        LATEX_SYMBOLS.put("lrcorner", "⌟");
+        LATEX_SYMBOLS.put("pounds", "£");
+        LATEX_SYMBOLS.put("euro", "€");
+        LATEX_SYMBOLS.put("yen", "¥");
+        LATEX_SYMBOLS.put("copyright", "©");
+        LATEX_SYMBOLS.put("degree", "°");
+
+        // 双线体补全（含数字 𝟘..𝟡）
+        DOUBLE_STRUCK.put('A', "𝔸");
+        DOUBLE_STRUCK.put('J', "𝕁");
+        DOUBLE_STRUCK.put('O', "𝕆");
+        DOUBLE_STRUCK.put('S', "𝕊");
+        DOUBLE_STRUCK.put('0', "𝟘");
+        DOUBLE_STRUCK.put('1', "𝟙");
+        DOUBLE_STRUCK.put('2', "𝟚");
+        DOUBLE_STRUCK.put('3', "𝟛");
+        DOUBLE_STRUCK.put('4', "𝟜");
+        DOUBLE_STRUCK.put('5', "𝟝");
+        DOUBLE_STRUCK.put('6', "𝟞");
+        DOUBLE_STRUCK.put('7', "𝟟");
+        DOUBLE_STRUCK.put('8', "𝟠");
+        DOUBLE_STRUCK.put('9', "𝟡");
+
+        // 花体
+        MATHCAL.put('A', "𝒜");
+        MATHCAL.put('B', "ℬ");
+        MATHCAL.put('C', "𝒞");
+        MATHCAL.put('D', "𝒟");
+        MATHCAL.put('E', "ℰ");
+        MATHCAL.put('F', "ℱ");
+        MATHCAL.put('G', "𝒢");
+        MATHCAL.put('H', "ℋ");
+        MATHCAL.put('I', "ℐ");
+        MATHCAL.put('J', "𝒥");
+        MATHCAL.put('K', "𝒦");
+        MATHCAL.put('L', "ℒ");
+        MATHCAL.put('M', "ℳ");
+        MATHCAL.put('N', "𝒩");
+        MATHCAL.put('O', "𝒪");
+        MATHCAL.put('P', "𝒫");
+        MATHCAL.put('Q', "𝒬");
+        MATHCAL.put('R', "ℛ");
+        MATHCAL.put('S', "𝒮");
+        MATHCAL.put('T', "𝒯");
+        MATHCAL.put('U', "𝒰");
+        MATHCAL.put('V', "𝒱");
+        MATHCAL.put('W', "𝒲");
+        MATHCAL.put('X', "𝒳");
+        MATHCAL.put('Y', "𝒴");
+        MATHCAL.put('Z', "𝒵");
+
+        // 直立显示的函数名
+        String[] functions = {"sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos",
+                "arctan", "arccot", "sinh", "cosh", "tanh", "coth", "sech", "csch",
+                "log", "ln", "lg", "exp", "lim", "limsup", "liminf", "max", "min",
+                "sup", "inf", "det", "dim", "ker", "deg", "gcd", "hom", "arg", "Pr"};
+        for (int i = 0; i < functions.length; i++) {
+            LATEX_FUNCTIONS.add(functions[i]);
+        }
+
+        // 只影响排版、不需要输出内容的命令
+        String[] ignored = {"displaystyle", "textstyle", "scriptstyle", "scriptscriptstyle",
+                "limits", "nolimits", "nonumber", "notag", "hline", "allowbreak",
+                "linebreak", "pagebreak", "thinspace", "medspace", "thickspace",
+                "enspace", "negthinspace", "tiny", "scriptsize", "footnotesize",
+                "small", "normalsize", "large", "Large", "LARGE", "huge", "Huge",
+                "left.", "right."};
+        for (int i = 0; i < ignored.length; i++) {
+            IGNORED_COMMANDS.add(ignored[i]);
+        }
+
+        // 数学环境
+        String[] environments = {"matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix",
+                "Vmatrix", "smallmatrix", "array", "subarray", "cases", "dcases", "rcases",
+                "aligned", "align", "align*", "alignedat", "gather", "gathered", "gather*",
+                "equation", "equation*", "split", "multline", "multline*", "eqnarray",
+                "eqnarray*"};
+        for (int i = 0; i < environments.length; i++) {
+            MATH_ENVIRONMENTS.add(environments[i]);
+        }
     }
 
     private static void appendDisplayMath(SpannableStringBuilder out, String latex, Colors colors) {
-        String text = latexToText(latex).trim();
-        if (text.length() == 0) {
+        if (latex == null) {
+            return;
+        }
+        String marked = latexToText(latex);
+        if (visibleText(marked).trim().length() == 0) {
             return;
         }
         if (out.length() > 0) {
             out.append('\n');
         }
-        int start = out.length();
-        out.append("  ").append(text);
-        int end = out.length();
-        out.setSpan(new TypefaceSpan("serif"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.setSpan(new StyleSpan(Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.setSpan(new ForegroundColorSpan(colors.math), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.setSpan(new RelativeSizeSpan(1.06f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.append('\n');
+        out.append("  ");
+        appendMathMarked(out, marked, colors, true);
     }
 
     private static boolean appendMath(SpannableStringBuilder out, String latex, Colors colors,
                                       boolean display) {
-        String text = latexToText(latex).trim();
-        if (text.length() == 0) {
+        if (latex == null) {
             return false;
         }
-        int start = out.length();
-        out.append(text);
-        int end = out.length();
-        out.setSpan(new TypefaceSpan("serif"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.setSpan(new StyleSpan(Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        out.setSpan(new ForegroundColorSpan(colors.math), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        String marked = latexToText(latex);
+        if (visibleText(marked).trim().length() == 0) {
+            return false;
+        }
+        return appendMathMarked(out, marked, colors, display);
+    }
+
+    /** 把带标记的数学文本写入 Spannable，并套上衬线、斜体、上下标等 Span。 */
+    private static boolean appendMathMarked(SpannableStringBuilder out, String marked, Colors colors,
+                                            boolean display) {
+        int start = 0;
+        int end = marked.length();
+        while (start < end && isMathSpace(marked.charAt(start))) {
+            start++;
+        }
+        while (end > start && isMathSpace(marked.charAt(end - 1))) {
+            end--;
+        }
+        if (start >= end) {
+            return false;
+        }
+
+        int baseStart = out.length();
+        List<int[]> sups = new ArrayList<int[]>();
+        List<int[]> subs = new ArrayList<int[]>();
+        List<int[]> ups = new ArrayList<int[]>();
+        List<int[]> bolds = new ArrayList<int[]>();
+        List<int[]> uls = new ArrayList<int[]>();
+        List<Integer> supStack = new ArrayList<Integer>();
+        List<Integer> subStack = new ArrayList<Integer>();
+        List<Integer> upStack = new ArrayList<Integer>();
+        List<Integer> boldStack = new ArrayList<Integer>();
+        List<Integer> ulStack = new ArrayList<Integer>();
+
+        int visible = 0;
+        for (int i = start; i < end; i++) {
+            char c = marked.charAt(i);
+            if (c == M_SUP) {
+                supStack.add(out.length());
+            } else if (c == M_SUP_END) {
+                closeRange(supStack, sups, out.length());
+            } else if (c == M_SUB) {
+                subStack.add(out.length());
+            } else if (c == M_SUB_END) {
+                closeRange(subStack, subs, out.length());
+            } else if (c == M_UP) {
+                upStack.add(out.length());
+            } else if (c == M_UP_END) {
+                closeRange(upStack, ups, out.length());
+            } else if (c == M_BOLD) {
+                boldStack.add(out.length());
+            } else if (c == M_BOLD_END) {
+                closeRange(boldStack, bolds, out.length());
+            } else if (c == M_UL) {
+                ulStack.add(out.length());
+            } else if (c == M_UL_END) {
+                closeRange(ulStack, uls, out.length());
+            } else {
+                if (!Character.isWhitespace(c)) {
+                    visible++;
+                }
+                out.append(c);
+            }
+        }
+        while (!supStack.isEmpty()) {
+            closeRange(supStack, sups, out.length());
+        }
+        while (!subStack.isEmpty()) {
+            closeRange(subStack, subs, out.length());
+        }
+        while (!upStack.isEmpty()) {
+            closeRange(upStack, ups, out.length());
+        }
+        while (!boldStack.isEmpty()) {
+            closeRange(boldStack, bolds, out.length());
+        }
+        while (!ulStack.isEmpty()) {
+            closeRange(ulStack, uls, out.length());
+        }
+
+        if (visible == 0) {
+            out.delete(baseStart, out.length());
+            return false;
+        }
+
+        int baseEnd = out.length();
+        out.setSpan(new TypefaceSpan("serif"), baseStart, baseEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        out.setSpan(new ForegroundColorSpan(colors.math), baseStart, baseEnd,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         if (display) {
-            out.setSpan(new RelativeSizeSpan(1.06f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            out.setSpan(new RelativeSizeSpan(1.06f), baseStart, baseEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        applyItalic(out, baseStart, baseEnd, ups);
+        applyScriptSpans(out, sups, true);
+        applyScriptSpans(out, subs, false);
+        for (int i = 0; i < bolds.size(); i++) {
+            int[] r = bolds.get(i);
+            if (r[1] > r[0]) {
+                out.setSpan(new StyleSpan(Typeface.BOLD), r[0], r[1],
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+        }
+        for (int i = 0; i < uls.size(); i++) {
+            int[] r = uls.get(i);
+            if (r[1] > r[0]) {
+                out.setSpan(new UnderlineSpan(), r[0], r[1],
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
         }
         return true;
+    }
+
+    private static void closeRange(List<Integer> stack, List<int[]> ranges, int end) {
+        if (stack.isEmpty()) {
+            return;
+        }
+        int start = stack.remove(stack.size() - 1);
+        if (end > start) {
+            ranges.add(new int[]{start, end});
+        }
+    }
+
+    /** 除直立区段外整体斜体，函数名、\text{} 保持正体。 */
+    private static void applyItalic(SpannableStringBuilder out, int start, int end,
+                                    List<int[]> upright) {
+        if (upright.isEmpty()) {
+            italic(out, start, end);
+            return;
+        }
+        for (int i = 1; i < upright.size(); i++) {
+            int[] key = upright.get(i);
+            int j = i - 1;
+            while (j >= 0 && upright.get(j)[0] > key[0]) {
+                upright.set(j + 1, upright.get(j));
+                j--;
+            }
+            upright.set(j + 1, key);
+        }
+        int cursor = start;
+        for (int i = 0; i < upright.size(); i++) {
+            int s = Math.max(upright.get(i)[0], start);
+            int e = Math.min(upright.get(i)[1], end);
+            if (s > cursor) {
+                italic(out, cursor, s);
+            }
+            if (e > cursor) {
+                cursor = e;
+            }
+        }
+        if (cursor < end) {
+            italic(out, cursor, end);
+        }
+    }
+
+    private static void italic(SpannableStringBuilder out, int start, int end) {
+        if (end > start) {
+            out.setSpan(new StyleSpan(Typeface.ITALIC), start, end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+    }
+
+    private static void applyScriptSpans(SpannableStringBuilder out, List<int[]> ranges,
+                                         boolean superscript) {
+        for (int i = 0; i < ranges.size(); i++) {
+            int[] r = ranges.get(i);
+            if (r[1] <= r[0]) {
+                continue;
+            }
+            if (superscript) {
+                out.setSpan(new SuperscriptSpan(), r[0], r[1],
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            } else {
+                out.setSpan(new SubscriptSpan(), r[0], r[1],
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            out.setSpan(new RelativeSizeSpan(0.72f), r[0], r[1],
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+    }
+
+    /** 去掉控制标记后的可见文本，用于判断公式是否为空。 */
+    private static String visibleText(String marked) {
+        StringBuilder sb = new StringBuilder(marked.length());
+        for (int i = 0; i < marked.length(); i++) {
+            char c = marked.charAt(i);
+            if (!isMathMarker(c)) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean isMathMarker(char c) {
+        return (c >= M_SUP && c <= M_BOLD_END) || c == M_UL || c == M_UL_END;
+    }
+
+    private static boolean isMathSpace(char c) {
+        return c == ' ' || c == '\n' || c == '\t' || c == '\r';
+    }
+
+    private static String plainMath(String marked) {
+        return visibleText(marked);
     }
 
     /** 判断 $...$ 内容是否像公式，避免把货币金额（如 $5.00）误渲染。 */
@@ -874,31 +1325,47 @@ public final class MarkdownRenderer {
         if (content.length() == 0) {
             return false;
         }
-        if (content.charAt(0) == ' ' || content.charAt(content.length() - 1) == ' ') {
+        if (Character.isWhitespace(content.charAt(0))
+                || Character.isWhitespace(content.charAt(content.length() - 1))) {
             return false;
         }
         boolean hasLetter = false;
-        boolean hasSpace = false;
         boolean hasMarkup = false;
         boolean hasOperator = false;
+        boolean hasGreek = false;
+        boolean hasCjk = false;
         for (int i = 0; i < content.length(); i++) {
             char c = content.charAt(i);
             if (Character.isLetter(c)) {
                 hasLetter = true;
-            } else if (c == ' ' || c == '\t') {
-                hasSpace = true;
-            } else if (c == '+' || c == '-' || c == '*' || c == '/' || c == '=' || c == '<') {
-                hasOperator = true;
-            }
-            if (c == '\\' || c == '^' || c == '_' || c == '{' || c == '}') {
+                if (c >= 0x0370 && c <= 0x03FF) {
+                    hasGreek = true;
+                }
+                if (c >= 0x4E00 && c <= 0x9FFF) {
+                    hasCjk = true;
+                }
+            } else if (c == '\\' || c == '^' || c == '_' || c == '{' || c == '}') {
                 hasMarkup = true;
+            } else if (c == '+' || c == '-' || c == '*' || c == '/' || c == '='
+                    || c == '<' || c == '>') {
+                hasOperator = true;
             }
         }
         if (hasMarkup) {
             return true;
         }
-        return hasLetter && !hasSpace && (hasOperator || content.length() <= 20)
-                && content.length() <= 24;
+        // $…$ 里夹着中文时按普通文本处理，避免把「$100$ 和 $x$」中间的中文当成公式
+        if (hasCjk) {
+            return false;
+        }
+        if (!hasLetter) {
+            return false;
+        }
+        if (hasOperator || hasGreek) {
+            return true;
+        }
+        return content.indexOf(' ') < 0 && content.length() <= 24
+                || content.length() <= 10;
     }
 
     private static String latexToText(String latex) {
@@ -906,12 +1373,44 @@ public final class MarkdownRenderer {
         List<String> envs = new ArrayList<String>();
         int[] pos = {0};
         convertLatex(latex, out, pos, envs);
-        return out.toString();
+        return tidyMath(out.toString());
+    }
+
+    /** 压缩多余空格，并去掉括号内侧的空格。 */
+    private static String tidyMath(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        boolean pendingSpace = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == ' ') {
+                pendingSpace = true;
+                continue;
+            }
+            if (pendingSpace) {
+                int last = sb.length() - 1;
+                char prev = last >= 0 ? sb.charAt(last) : '\0';
+                boolean afterOpen = prev == '(' || prev == '[' || prev == '{';
+                boolean beforeClose = c == ')' || c == ']' || c == '}';
+                if (last >= 0 && !afterOpen && !beforeClose && prev != ' ') {
+                    sb.append(' ');
+                }
+                pendingSpace = false;
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     private static void convertLatex(String s, StringBuilder out, int[] pos, List<String> envs) {
         while (pos[0] < s.length()) {
             char c = s.charAt(pos[0]);
+            if (c == '%') {
+                // LaTeX 注释，忽略到行尾
+                while (pos[0] < s.length() && s.charAt(pos[0]) != '\n') {
+                    pos[0]++;
+                }
+                continue;
+            }
             if (c == '\\') {
                 pos[0]++;
                 if (pos[0] >= s.length()) {
@@ -922,15 +1421,15 @@ public final class MarkdownRenderer {
                     pos[0]++;
                     if (next == '\\') {
                         out.append('\n');
-                    } else if (next == ' ' || next == ';' || next == ':' || next == '>') {
+                    } else if (next == ' ' || next == ';' || next == ':' || next == '\n') {
                         out.append(' ');
+                    } else if (next == ',' || next == '!') {
+                        // 细间距，忽略
+                    } else if (next == '|') {
+                        out.append('‖');
                     } else if (next == '{' || next == '}' || next == '%' || next == '&'
                             || next == '#' || next == '_' || next == '$') {
                         out.append(next);
-                    } else if (next == '|') {
-                        out.append('‖');
-                    } else if (next == ',' || next == '!') {
-                        // 细间距，忽略
                     } else {
                         out.append(next);
                     }
@@ -940,7 +1439,14 @@ public final class MarkdownRenderer {
                 while (pos[0] < s.length() && Character.isLetter(s.charAt(pos[0]))) {
                     pos[0]++;
                 }
-                handleCommand(s.substring(start, pos[0]), s, out, pos, envs);
+                String name = s.substring(start, pos[0]);
+                // \operatorname*{...}、\hspace*{...} 这类带星号的写法
+                if (pos[0] < s.length() && s.charAt(pos[0]) == '*'
+                        && (name.equals("operatorname") || name.equals("hspace")
+                        || name.equals("vspace"))) {
+                    pos[0]++;
+                }
+                handleCommand(name, s, out, pos, envs);
                 continue;
             }
             if (c == '{') {
@@ -966,6 +1472,16 @@ public final class MarkdownRenderer {
                 out.append(isMatrixEnv(envs) ? " │ " : "  ");
                 continue;
             }
+            if (c == '\'') {
+                out.append('′');
+                pos[0]++;
+                continue;
+            }
+            if (c == '~') {
+                out.append(' ');
+                pos[0]++;
+                continue;
+            }
             if (c == '$') {
                 pos[0]++;
                 continue;
@@ -984,6 +1500,12 @@ public final class MarkdownRenderer {
             out.append(formatFraction(numerator, denominator));
             return;
         }
+        if (name.equals("binom") || name.equals("dbinom") || name.equals("tbinom")) {
+            String n = latexToText(readArgument(s, pos));
+            String k = latexToText(readArgument(s, pos));
+            out.append("C(").append(plainMath(n)).append(", ").append(plainMath(k)).append(')');
+            return;
+        }
         if (name.equals("sqrt")) {
             String index = null;
             if (pos[0] < s.length() && s.charAt(pos[0]) == '[') {
@@ -997,29 +1519,67 @@ public final class MarkdownRenderer {
             if (index != null && index.length() > 0) {
                 out.append(script('^', index));
             }
-            out.append("√(").append(value).append(')');
+            if (plainMath(value).length() == 1) {
+                out.append("√").append(value);
+            } else {
+                out.append("√(").append(value).append(')');
+            }
             return;
         }
-        if (name.equals("text") || name.equals("textrm") || name.equals("textsf")
-                || name.equals("textbf") || name.equals("textit") || name.equals("mbox")
-                || name.equals("operatorname") || name.equals("mathrm")
-                || name.equals("mathit") || name.equals("mathsf") || name.equals("mathtt")
-                || name.equals("mathbf") || name.equals("boldsymbol") || name.equals("mathcal")
-                || name.equals("mathbb") || name.equals("mathnormal")) {
-            String value = latexToText(readArgument(s, pos));
-            out.append(name.equals("mathbb") ? doubleStruck(value) : value);
+        if (name.equals("text") || name.equals("textrm") || name.equals("textnormal")
+                || name.equals("mbox") || name.equals("mathrm") || name.equals("mathup")
+                || name.equals("mathsf") || name.equals("mathtt") || name.equals("mathop")
+                || name.equals("operatorname")) {
+            out.append(upright(latexToText(readArgument(s, pos))));
+            return;
+        }
+        if (name.equals("textbf")) {
+            out.append(bold(upright(latexToText(readArgument(s, pos)))));
+            return;
+        }
+        if (name.equals("mathbf")) {
+            out.append(bold(upright(latexToText(readArgument(s, pos)))));
+            return;
+        }
+        if (name.equals("boldsymbol") || name.equals("bm") || name.equals("pmb")) {
+            out.append(bold(latexToText(readArgument(s, pos))));
+            return;
+        }
+        if (name.equals("textit") || name.equals("emph") || name.equals("mathit")) {
+            out.append(latexToText(readArgument(s, pos)));
+            return;
+        }
+        if (name.equals("mathbb")) {
+            out.append(doubleStruck(plainMath(latexToText(readArgument(s, pos)))));
+            return;
+        }
+        if (name.equals("mathcal") || name.equals("mathscr")) {
+            out.append(scriptLetters(plainMath(latexToText(readArgument(s, pos)))));
+            return;
+        }
+        if (name.equals("textcolor")) {
+            readArgument(s, pos);
+            out.append(upright(latexToText(readArgument(s, pos))));
             return;
         }
         if (name.equals("overline") || name.equals("bar")) {
             out.append(latexToText(readArgument(s, pos))).append('\u0304');
             return;
         }
-        if (name.equals("hat")) {
+        if (name.equals("underline")) {
+            out.append(underlined(latexToText(readArgument(s, pos))));
+            return;
+        }
+        if (name.equals("hat") || name.equals("widehat")) {
             out.append(latexToText(readArgument(s, pos))).append('\u0302');
             return;
         }
-        if (name.equals("vec")) {
+        if (name.equals("vec") || name.equals("overrightarrow")) {
             out.append(latexToText(readArgument(s, pos))).append('\u20D7');
+            return;
+        }
+        if (name.equals("overleftarrow")) {
+            out.append(latexToText(readArgument(s, pos))).append('\u20D6');
             return;
         }
         if (name.equals("dot")) {
@@ -1030,7 +1590,7 @@ public final class MarkdownRenderer {
             out.append(latexToText(readArgument(s, pos))).append('\u0308');
             return;
         }
-        if (name.equals("tilde")) {
+        if (name.equals("tilde") || name.equals("widetilde")) {
             out.append(latexToText(readArgument(s, pos))).append('\u0303');
             return;
         }
@@ -1042,17 +1602,60 @@ public final class MarkdownRenderer {
             out.append(latexToText(readArgument(s, pos))).append('\u0300');
             return;
         }
-        if (name.equals("left") || name.equals("right")
-                || name.startsWith("big") || name.startsWith("Big")) {
+        if (name.equals("breve")) {
+            out.append(latexToText(readArgument(s, pos))).append('\u0306');
+            return;
+        }
+        if (name.equals("check")) {
+            out.append(latexToText(readArgument(s, pos))).append('\u030C');
+            return;
+        }
+        if (name.equals("overbrace") || name.equals("underbrace") || name.equals("boxed")
+                || name.equals("fbox") || name.equals("substack")) {
+            out.append(latexToText(readArgument(s, pos)));
+            return;
+        }
+        if (name.equals("overset") || name.equals("stackrel")) {
+            String top = latexToText(readArgument(s, pos));
+            String base = latexToText(readArgument(s, pos));
+            out.append(base).append(script('^', top));
+            return;
+        }
+        if (name.equals("underset")) {
+            String bottom = latexToText(readArgument(s, pos));
+            String base = latexToText(readArgument(s, pos));
+            out.append(base).append(script('_', bottom));
+            return;
+        }
+        if (name.equals("xrightarrow") || name.equals("xleftarrow")
+                || name.equals("xRightarrow") || name.equals("xLeftarrow")) {
+            String label = latexToText(readArgument(s, pos));
+            boolean left = name.equals("xleftarrow") || name.equals("xLeftarrow");
+            out.append(left ? "←" : "→");
+            if (plainMath(label).length() > 0) {
+                out.append(script('^', label));
+            }
+            return;
+        }
+        if (name.equals("left") || name.equals("right") || name.equals("middle")) {
             if (pos[0] < s.length() && s.charAt(pos[0]) == '.') {
                 pos[0]++;
             }
             return;
         }
+        // 只放大括号的命令，注意不能误伤 bigcup / bigoplus 等符号
+        if (name.equals("big") || name.equals("Big") || name.equals("bigg")
+                || name.equals("Bigg") || name.equals("bigl") || name.equals("Bigl")
+                || name.equals("biggl") || name.equals("Biggl") || name.equals("bigr")
+                || name.equals("Bigr") || name.equals("biggr") || name.equals("Biggr")
+                || name.equals("bigm") || name.equals("Bigm")) {
+            return;
+        }
         if (name.equals("begin") || name.equals("end")) {
             String env = readArgument(s, pos).trim();
             if (name.equals("begin")) {
-                if (env.equals("array") || env.equals("tabular")) {
+                if (env.equals("array") || env.equals("tabular") || env.equals("alignat")
+                        || env.equals("alignedat") || env.equals("subarray")) {
                     readArgument(s, pos);
                 }
                 envs.add(env);
@@ -1073,10 +1676,14 @@ public final class MarkdownRenderer {
             out.append("    ");
             return;
         }
-        if (name.equals("displaystyle") || name.equals("textstyle")
-                || name.equals("scriptstyle") || name.equals("scriptscriptstyle")
-                || name.equals("limits") || name.equals("nolimits")
-                || name.equals("nonumber") || name.equals("notag")) {
+        if (name.equals("hspace") || name.equals("vspace") || name.equals("phantom")
+                || name.equals("hphantom") || name.equals("vphantom")) {
+            readArgument(s, pos);
+            return;
+        }
+        if (name.equals("color") || name.equals("tag") || name.equals("label")
+                || name.equals("ref") || name.equals("eqref") || name.equals("cline")) {
+            readArgument(s, pos);
             return;
         }
         if (name.equals("pmod")) {
@@ -1087,12 +1694,61 @@ public final class MarkdownRenderer {
             out.append(" mod ");
             return;
         }
+        if (name.equals("not")) {
+            // \not= \not< \not> \not\in 之类的组合
+            if (pos[0] < s.length()) {
+                char next = s.charAt(pos[0]);
+                if (next == '=') {
+                    out.append('≠');
+                    pos[0]++;
+                    return;
+                }
+                if (next == '<') {
+                    out.append('≮');
+                    pos[0]++;
+                    return;
+                }
+                if (next == '>') {
+                    out.append('≯');
+                    pos[0]++;
+                    return;
+                }
+                if (next == '\\' && pos[0] + 1 < s.length()) {
+                    char cmd = s.charAt(pos[0] + 1);
+                    if (cmd == 'i') {
+                        out.append('∉');
+                        pos[0] += "\\in".length();
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        if (IGNORED_COMMANDS.contains(name)) {
+            return;
+        }
+        if (LATEX_FUNCTIONS.contains(name)) {
+            out.append(upright(name));
+            return;
+        }
         String symbol = LATEX_SYMBOLS.get(name);
         if (symbol != null) {
             out.append(symbol);
         } else {
             out.append(name);
         }
+    }
+
+    private static String upright(String value) {
+        return value.length() == 0 ? "" : String.valueOf(M_UP) + value + M_UP_END;
+    }
+
+    private static String bold(String value) {
+        return value.length() == 0 ? "" : String.valueOf(M_BOLD) + value + M_BOLD_END;
+    }
+
+    private static String underlined(String value) {
+        return value.length() == 0 ? "" : String.valueOf(M_UL) + value + M_UL_END;
     }
 
     /** 读取一个参数：{...} 分组、\命令 或单个字符。 */
@@ -1147,6 +1803,9 @@ public final class MarkdownRenderer {
         if (body.length() == 0) {
             return "";
         }
+        if (marker == '^' && (body.equals("∘") || body.equals("°"))) {
+            return "°";
+        }
         Map<Character, String> map = marker == '^' ? SUP_SCRIPTS : SUB_SCRIPTS;
         StringBuilder result = new StringBuilder();
         boolean mapped = true;
@@ -1161,20 +1820,31 @@ public final class MarkdownRenderer {
         if (mapped) {
             return result.toString();
         }
-        return marker == '^' ? "^(" + body + ")" : "_(" + body + ")";
+        // Unicode 上下标覆盖不到的字符（如 π、∞、中文、嵌套分数）
+        // 改用真正的上下标 Span，比 "^(...)" 好看也更接近 LaTeX 排版。
+        if (marker == '^') {
+            return M_SUP + body + M_SUP_END;
+        }
+        return M_SUB + body + M_SUB_END;
     }
 
     private static String formatFraction(String numerator, String denominator) {
-        return fractionPart(numerator) + "/" + fractionPart(denominator);
+        String top = fractionPart(numerator);
+        String bottom = fractionPart(denominator);
+        if (top.length() == 0 || bottom.length() == 0) {
+            return top + bottom;
+        }
+        return top + "/" + bottom;
     }
 
     private static String fractionPart(String value) {
-        if (value.length() == 0) {
+        String bare = plainMath(value);
+        if (bare.length() == 0) {
             return "";
         }
-        boolean simple = value.length() <= 3;
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
+        boolean simple = bare.length() <= 3;
+        for (int i = 0; i < bare.length(); i++) {
+            char c = bare.charAt(i);
             if (!Character.isLetterOrDigit(c) && c != '.') {
                 simple = false;
                 break;
@@ -1187,6 +1857,15 @@ public final class MarkdownRenderer {
         StringBuilder result = new StringBuilder();
         for (int i = 0; i < value.length(); i++) {
             String mapped = DOUBLE_STRUCK.get(value.charAt(i));
+            result.append(mapped == null ? String.valueOf(value.charAt(i)) : mapped);
+        }
+        return result.toString();
+    }
+
+    private static String scriptLetters(String value) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            String mapped = MATHCAL.get(value.charAt(i));
             result.append(mapped == null ? String.valueOf(value.charAt(i)) : mapped);
         }
         return result.toString();
@@ -1208,7 +1887,7 @@ public final class MarkdownRenderer {
         if (env.equals("Vmatrix")) {
             return "‖";
         }
-        if (env.equals("cases")) {
+        if (env.equals("cases") || env.equals("dcases")) {
             return "{";
         }
         return "";
@@ -1230,6 +1909,9 @@ public final class MarkdownRenderer {
         if (env.equals("Vmatrix")) {
             return "‖";
         }
+        if (env.equals("rcases")) {
+            return "}";
+        }
         return "";
     }
 
@@ -1238,6 +1920,24 @@ public final class MarkdownRenderer {
             return false;
         }
         String env = envs.get(envs.size() - 1);
-        return env.indexOf("matrix") >= 0 || env.equals("array");
+        return env.indexOf("matrix") >= 0 || env.equals("array")
+                || env.equals("subarray");
+    }
+
+    /** 从 \begin{env} 这一行里取出环境名。 */
+    private static String environmentName(String line) {
+        int start = line.indexOf('{');
+        if (start < 0) {
+            return "";
+        }
+        int end = line.indexOf('}', start + 1);
+        if (end < 0) {
+            return "";
+        }
+        return line.substring(start + 1, end).trim();
+    }
+
+    private static boolean isMathEnvironment(String env) {
+        return MATH_ENVIRONMENTS.contains(env);
     }
 }
