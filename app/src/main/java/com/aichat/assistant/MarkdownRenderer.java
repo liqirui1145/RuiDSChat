@@ -1,5 +1,7 @@
 package com.aichat.assistant;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Typeface;
@@ -8,6 +10,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.AlignmentSpan;
 import android.text.style.BackgroundColorSpan;
+import android.text.style.ClickableSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.style.StrikethroughSpan;
@@ -18,6 +21,8 @@ import android.text.style.TypefaceSpan;
 import android.text.style.UnderlineSpan;
 import android.text.style.URLSpan;
 import android.util.DisplayMetrics;
+import android.view.View;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -40,6 +45,7 @@ public final class MarkdownRenderer {
 
     /** 当前主题下用到的颜色，深色模式会自动切换。 */
     private static final class Colors {
+        final Context context;
         final int codeBg;
         final int codeText;
         final int link;
@@ -48,6 +54,7 @@ public final class MarkdownRenderer {
         final int math;
 
         Colors(Context context) {
+            this.context = context.getApplicationContext();
             Resources r = context.getResources();
             codeBg = r.getColor(R.color.md_code_bg);
             codeText = r.getColor(R.color.md_code_text);
@@ -282,6 +289,9 @@ public final class MarkdownRenderer {
         if (code.length() == 0) {
             return;
         }
+        if (out.length() > 0) {
+            out.append('\n');
+        }
         int start = out.length();
         out.append(code);
         int end = out.length();
@@ -289,6 +299,28 @@ public final class MarkdownRenderer {
         out.setSpan(new RelativeSizeSpan(0.92f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         out.setSpan(new BackgroundColorSpan(colors.codeBg), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         out.setSpan(new ForegroundColorSpan(colors.codeText), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        // 代码块下方追加可点击的「复制代码」，点击后整段写入剪贴板
+        final String plain = code;
+        final Context appContext = colors.context;
+        out.append('\n');
+        int buttonStart = out.length();
+        out.append("⧉ 复制代码");
+        int buttonEnd = out.length();
+        out.setSpan(new ForegroundColorSpan(colors.link), buttonStart, buttonEnd,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        out.setSpan(new ClickableSpan() {
+            @Override
+            public void onClick(View widget) {
+                ClipboardManager manager =
+                        (ClipboardManager) appContext.getSystemService(Context.CLIPBOARD_SERVICE);
+                if (manager == null) {
+                    return;
+                }
+                manager.setPrimaryClip(ClipData.newPlainText("代码", plain));
+                Toast.makeText(appContext, "代码已复制", Toast.LENGTH_SHORT).show();
+            }
+        }, buttonStart, buttonEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
 
     private static void appendInline(SpannableStringBuilder out, String s, Colors colors) {
@@ -349,6 +381,43 @@ public final class MarkdownRenderer {
                     out.setSpan(new ForegroundColorSpan(colors.codeText), start, stop, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                     i = end + 1;
                     continue;
+                }
+            }
+
+            // 图片 ![alt](url)：渲染成可点击的「🖼 说明」，点击打开全屏查看
+            if (c == '!' && i + 1 < s.length() && s.charAt(i + 1) == '[') {
+                int close = s.indexOf(']', i + 2);
+                if (close > i + 1 && close + 1 < s.length() && s.charAt(close + 1) == '(') {
+                    int paren = s.indexOf(')', close + 2);
+                    if (paren > close + 2) {
+                        String alt = s.substring(i + 2, close).trim();
+                        String target = s.substring(close + 2, paren).trim();
+                        int space = target.indexOf(' ');
+                        if (space > 0) {
+                            target = target.substring(0, space);
+                        }
+                        final String imageUrl = normalizeUrl(target);
+                        int start = out.length();
+                        out.append("🖼 ");
+                        out.append(alt.length() > 0 ? alt : "查看图片");
+                        int stop = out.length();
+                        out.setSpan(new ForegroundColorSpan(colors.link), start, stop,
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        out.setSpan(new UnderlineSpan(), start, stop,
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        if (imageUrl != null
+                                && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
+                            final Context appContext = colors.context;
+                            out.setSpan(new ClickableSpan() {
+                                @Override
+                                public void onClick(View widget) {
+                                    ImageViewerActivity.open(appContext, imageUrl);
+                                }
+                            }, start, stop, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        }
+                        i = paren + 1;
+                        continue;
+                    }
                 }
             }
 

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <ImageView
+        android:id="@+id/image_viewer_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="图片预览"
+        android:scaleType="fitCenter" />
+
+    <ProgressBar
+        android:id="@+id/image_viewer_progress"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="center" />
+
+    <TextView
+        android:id="@+id/image_viewer_hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:paddingLeft="32dp"
+        android:paddingRight="32dp"
+        android:textColor="#E5E7EB"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+</FrameLayout>

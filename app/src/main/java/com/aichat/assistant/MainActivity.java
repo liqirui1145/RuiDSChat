@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -72,6 +73,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private final StringBuilder streamBuffer = new StringBuilder();
     private volatile boolean streamRefreshScheduled;
     private String streamFinishReason;
+    /** 续写时已有内容的开头部分，流式刷新时拼在增量前面。 */
+    private String streamPrefix = "";
+    /** 用户是否停留在列表底部；上滑查看历史时不再强制跟随输出。 */
+    private boolean atBottom = true;
 
     /** 流式增量节流刷新，避免每个 token 都重绘整条消息。 */
     private final Runnable streamRefreshRunnable = new Runnable() {
@@ -82,10 +87,12 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             if (target == null) {
                 return;
             }
-            target.setText(snapshotStream());
+            target.setText(streamPrefix + snapshotStream());
             hideStatus();
             adapter.notifyDataSetChanged();
-            scrollToBottom();
+            if (atBottom) {
+                scrollToBottom();
+            }
         }
     };
 
@@ -121,6 +128,21 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         View emptyView = findViewById(R.id.empty_state);
         messageList.setEmptyView(emptyView);
         messageList.setSelection(adapter.getCount());
+        messageList.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+            }
+
+            @Override
+            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount,
+                                 int totalItemCount) {
+                if (totalItemCount == 0) {
+                    atBottom = true;
+                } else {
+                    atBottom = firstVisibleItem + visibleItemCount >= totalItemCount - 1;
+                }
+            }
+        });
 
         conversationAdapter = new ConversationAdapter(this, conversations);
         conversationAdapter.setCurrentId(current.getId());
@@ -323,12 +345,13 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         final List<ChatMessage> prior = ContextWindow.trim(
                 new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
                 Prefs.getContextMessages(this));
-        startStreaming(prior, userText, uri, fileName, image);
+        startStreaming(prior, userText, uri, fileName, image, null);
     }
 
-    /** 发起流式请求；首次提问和重新生成共用这套流程。 */
+    /** 发起流式请求；首次提问、重新生成和继续生成共用这套流程。 */
     private void startStreaming(final List<ChatMessage> prior, final String userText,
-                                final Uri uri, final String fileName, final boolean image) {
+                                final Uri uri, final String fileName, final boolean image,
+                                final ChatMessage continueTarget) {
         sending = true;
         setBusy(true);
         showStatus("正在准备…");
@@ -336,16 +359,23 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         final Context appContext = getApplicationContext();
 
         streamFinishReason = null;
+        streamPrefix = continueTarget == null ? "" : continueTarget.getText();
         synchronized (streamBuffer) {
             streamBuffer.setLength(0);
         }
         streamRefreshScheduled = false;
         final ApiClient.StreamHandle handle = new ApiClient.StreamHandle();
         streamHandle = handle;
-        final ChatMessage placeholder = new ChatMessage(ChatMessage.ROLE_ASSISTANT, "正在思考…");
-        streamingMessage = placeholder;
-        messages.add(placeholder);
+        if (continueTarget != null) {
+            continueTarget.setTruncated(false);
+            streamingMessage = continueTarget;
+        } else {
+            ChatMessage placeholder = new ChatMessage(ChatMessage.ROLE_ASSISTANT, "正在思考…");
+            streamingMessage = placeholder;
+            messages.add(placeholder);
+        }
         adapter.notifyDataSetChanged();
+        atBottom = true;
         scrollToBottom();
 
         executor.execute(new Runnable() {
@@ -412,7 +442,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                     if (handle.isCancelled()) {
                         finishStream(null, reply, null, true);
                     } else if (reply.length() == 0) {
-                        finishStream("模型没有返回文字内容，请稍后重试", null, streamFinishReason, false);
+                        finishStream("模型没有返回文字内容，请稍后重试", reply, streamFinishReason, false);
                     } else {
                         finishStream(null, reply, streamFinishReason, false);
                     }
@@ -470,6 +500,23 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                     }
                 })
                 .show();
+    }
+
+    @Override
+    public void onContinueGeneration(ChatMessage message) {
+        if (sending) {
+            toast("正在生成回复，请稍候");
+            return;
+        }
+        int index = messages.indexOf(message);
+        if (index < 0) {
+            return;
+        }
+        List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages.subList(0, index + 1)),
+                Prefs.getContextMessages(this));
+        startStreaming(prior, "请接着上文继续输出未完成的内容，不要重复已经输出过的部分。",
+                null, null, false, message);
     }
 
     private void copyMessage(ChatMessage message) {
@@ -534,7 +581,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
 
         List<ChatMessage> prior = ContextWindow.trim(
                 new ArrayList<ChatMessage>(messages), Prefs.getContextMessages(this));
-        startStreaming(prior, question, null, null, false);
+        startStreaming(prior, question, null, null, false, null);
     }
 
     private void exportConversation() {
@@ -602,10 +649,12 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 ChatMessage target = streamingMessage;
                 streamingMessage = null;
                 streamHandle = null;
+                String prefix = streamPrefix;
+                streamPrefix = "";
 
                 String text = reply == null ? "" : reply;
                 if (cancelled) {
-                    if (text.trim().length() == 0) {
+                    if (text.trim().length() == 0 && prefix.length() == 0) {
                         if (target != null) {
                             messages.remove(target);
                         }
@@ -613,30 +662,41 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         text = appendNotice(text, "（已停止生成）");
                     }
                 }
-                if ("length".equals(finishReason)) {
-                    text = appendNotice(text, "（回复达到长度上限被截断，可发送「继续」让模型接着写。）");
-                }
                 if (error != null) {
-                    if (text.trim().length() == 0) {
+                    if (text.trim().length() == 0 && prefix.length() == 0) {
                         if (target != null) {
                             messages.remove(target);
                         }
                         messages.add(new ChatMessage(ChatMessage.ROLE_ERROR, error));
-                    } else {
-                        text = appendNotice(text, "（连接中断：" + error + "）");
+                        adapter.notifyDataSetChanged();
+                        scrollToBottom();
+                        persistConversations();
+                        return;
                     }
+                    text = appendNotice(text, "（连接中断：" + error + "）");
                 }
 
-                if (text.trim().length() > 0) {
+                // 续写时把已有内容拼在增量前面
+                boolean truncated = "length".equals(finishReason) && error == null && !cancelled;
+                String combined = prefix + text;
+                if (combined.trim().length() > 0) {
                     if (target != null) {
-                        target.setText(text);
+                        target.setText(combined);
+                        target.setTruncated(truncated);
                     } else {
-                        messages.add(new ChatMessage(ChatMessage.ROLE_ASSISTANT, text));
+                        ChatMessage created =
+                                new ChatMessage(ChatMessage.ROLE_ASSISTANT, combined);
+                        created.setTruncated(truncated);
+                        messages.add(created);
                     }
+                } else if (truncated && target != null) {
+                    target.setTruncated(true);
                 }
 
                 adapter.notifyDataSetChanged();
-                scrollToBottom();
+                if (atBottom) {
+                    scrollToBottom();
+                }
                 persistConversations();
             }
         });

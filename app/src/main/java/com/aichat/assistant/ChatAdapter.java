@@ -1,7 +1,11 @@
 package com.aichat.assistant;
 
 import android.content.Context;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.method.LinkMovementMethod;
+import android.text.style.ClickableSpan;
+import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -30,6 +34,9 @@ public class ChatAdapter extends BaseAdapter {
     /** 长按消息的操作回调。 */
     public interface OnMessageActionListener {
         void onMessageLongClick(ChatMessage message);
+
+        /** 点击「继续生成」时调用。 */
+        void onContinueGeneration(ChatMessage message);
     }
 
     private OnMessageActionListener actionListener;
@@ -108,7 +115,7 @@ public class ChatAdapter extends BaseAdapter {
                 cached.text = MarkdownRenderer.render(context, content);
                 renderCache.put(msg, cached);
             }
-            bubble.setText(cached.text);
+            bubble.setText(appendContinueButton(msg, cached.text));
         } else {
             bubble.setMovementMethod(null);
             bubble.setText(content);
@@ -127,5 +134,28 @@ public class ChatAdapter extends BaseAdapter {
         view.setOnLongClickListener(longClick);
         bubble.setOnLongClickListener(longClick);
         return view;
+    }
+
+    /** 被长度上限截断的回复末尾追加「继续生成」入口。 */
+    private CharSequence appendContinueButton(final ChatMessage msg, CharSequence rendered) {
+        if (!msg.isTruncated()) {
+            return rendered;
+        }
+        SpannableStringBuilder builder = new SpannableStringBuilder(rendered);
+        builder.append("\n\n▶ 继续生成");
+        int start = builder.length() - "▶ 继续生成".length();
+        int end = builder.length();
+        builder.setSpan(new ForegroundColorSpan(
+                        context.getResources().getColor(R.color.md_link)),
+                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        builder.setSpan(new ClickableSpan() {
+            @Override
+            public void onClick(View widget) {
+                if (actionListener != null) {
+                    actionListener.onContinueGeneration(msg);
+                }
+            }
+        }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return builder;
     }
 }

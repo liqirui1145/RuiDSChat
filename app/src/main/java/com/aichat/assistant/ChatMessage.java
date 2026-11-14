@@ -13,6 +13,8 @@ public class ChatMessage {
     private String attachmentName;
     /** 实际发送给模型的内容（可能包含文件全文），不持久化。 */
     private String sendText;
+    /** 是否因长度上限被截断，用于显示「继续生成」入口，不持久化。 */
+    private boolean truncated;
     /** 数据库中的行号，0 表示尚未写入。 */
     private long dbId;
 
@@ -60,6 +62,14 @@ public class ChatMessage {
 
     public boolean isUser() {
         return role == ROLE_USER;
+    }
+
+    public boolean isTruncated() {
+        return truncated;
+    }
+
+    public void setTruncated(boolean truncated) {
+        this.truncated = truncated;
     }
 
     public static ChatMessage fromJson(JSONObject o) {
