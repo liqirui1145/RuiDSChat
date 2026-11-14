@@ -1,6 +1,7 @@
 package com.aichat.assistant;
 
 import android.content.Context;
+import android.text.method.LinkMovementMethod;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -9,13 +10,22 @@ import android.widget.BaseAdapter;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ChatAdapter extends BaseAdapter {
 
     private final Context context;
     private final List<ChatMessage> messages;
     private final LayoutInflater inflater;
+    /** 缓存已渲染的富文本，滚动时不必重复解析整段 Markdown。 */
+    private final Map<ChatMessage, Rendered> renderCache = new HashMap<ChatMessage, Rendered>();
+
+    private static final class Rendered {
+        String source;
+        CharSequence text;
+    }
 
     public ChatAdapter(Context context, List<ChatMessage> messages) {
         this.context = context;
@@ -76,8 +86,20 @@ public class ChatAdapter extends BaseAdapter {
         }
 
         if (msg.getRole() == ChatMessage.ROLE_ASSISTANT) {
-            bubble.setText(MarkdownRenderer.render(context, content));
+            bubble.setMovementMethod(LinkMovementMethod.getInstance());
+            Rendered cached = renderCache.get(msg);
+            if (cached == null || !content.equals(cached.source)) {
+                if (renderCache.size() > 400) {
+                    renderCache.clear();
+                }
+                cached = new Rendered();
+                cached.source = content;
+                cached.text = MarkdownRenderer.render(context, content);
+                renderCache.put(msg, cached);
+            }
+            bubble.setText(cached.text);
         } else {
+            bubble.setMovementMethod(null);
             bubble.setText(content);
         }
         return view;

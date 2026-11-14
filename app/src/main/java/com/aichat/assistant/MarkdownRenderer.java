@@ -3,8 +3,10 @@ package com.aichat.assistant;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Typeface;
+import android.text.Layout;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
+import android.text.style.AlignmentSpan;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
@@ -14,12 +16,14 @@ import android.text.style.SubscriptSpan;
 import android.text.style.SuperscriptSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.UnderlineSpan;
+import android.text.style.URLSpan;
 import android.util.DisplayMetrics;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -214,13 +218,16 @@ public final class MarkdownRenderer {
         }
 
         if (trimmed.startsWith(">")) {
-            int start = out.length();
-            out.append("▎");
-            String body = trimmed.substring(1);
-            if (body.startsWith(" ")) {
-                body = body.substring(1);
+            int depth = 0;
+            while (trimmed.startsWith(">")) {
+                trimmed = trimmed.substring(1).trim();
+                depth++;
             }
-            appendInline(out, body, colors);
+            int start = out.length();
+            for (int i = 0; i < Math.min(depth, 3); i++) {
+                out.append("▎");
+            }
+            appendInline(out, trimmed, colors);
             out.setSpan(new ForegroundColorSpan(colors.quote), start, out.length(),
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             return;
@@ -235,9 +242,25 @@ public final class MarkdownRenderer {
         String indented = line.substring(0, indentEnd);
         String rest = line.substring(indentEnd);
         if (rest.startsWith("- ") || rest.startsWith("* ") || rest.startsWith("+ ")) {
+            String body = rest.substring(2);
+            // 任务列表：- [ ] / - [x]
+            if (body.equals("[ ]") || body.startsWith("[ ] ")) {
+                out.append(indented);
+                out.append("☐ ");
+                appendInline(out, body.substring(3).trim(), colors);
+                return;
+            }
+            if (body.length() >= 3 && body.charAt(0) == '['
+                    && (body.charAt(1) == 'x' || body.charAt(1) == 'X')
+                    && body.charAt(2) == ']') {
+                out.append(indented);
+                out.append("☑ ");
+                appendInline(out, body.substring(3).trim(), colors);
+                return;
+            }
             out.append(indented);
             out.append("• ");
-            appendInline(out, rest.substring(2), colors);
+            appendInline(out, body, colors);
             return;
         }
 
@@ -334,12 +357,49 @@ public final class MarkdownRenderer {
                 if (close > i + 1 && close + 1 < s.length() && s.charAt(close + 1) == '(') {
                     int paren = s.indexOf(')', close + 2);
                     if (paren > close + 2) {
+                        String label = s.substring(i + 1, close);
+                        String target = s.substring(close + 2, paren).trim();
+                        int space = target.indexOf(' ');
+                        if (space > 0) {
+                            // [文字](url "标题")，标题部分不参与链接
+                            target = target.substring(0, space);
+                        }
                         int start = out.length();
-                        out.append(s, i + 1, close);
+                        appendInline(out, label, colors);
                         int stop = out.length();
-                        out.setSpan(new ForegroundColorSpan(colors.link), start, stop, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                        out.setSpan(new UnderlineSpan(), start, stop, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        if (stop > start) {
+                            out.setSpan(new ForegroundColorSpan(colors.link), start, stop,
+                                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                            out.setSpan(new UnderlineSpan(), start, stop,
+                                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                            String url = normalizeUrl(target);
+                            if (url != null) {
+                                out.setSpan(new URLSpan(url), start, stop,
+                                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                            }
+                        }
                         i = paren + 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 自动链接：<https://example.com>
+            if (c == '<') {
+                int close = s.indexOf('>', i + 1);
+                if (close > i + 1) {
+                    String inner = s.substring(i + 1, close).trim();
+                    String url = normalizeUrl(inner);
+                    if (url != null) {
+                        int start = out.length();
+                        out.append(inner);
+                        out.setSpan(new ForegroundColorSpan(colors.link), start, out.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        out.setSpan(new UnderlineSpan(), start, out.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        out.setSpan(new URLSpan(url), start, out.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        i = close + 1;
                         continue;
                     }
                 }
@@ -349,8 +409,11 @@ public final class MarkdownRenderer {
                 int end = s.indexOf("~~", i + 2);
                 if (end > i + 2) {
                     int start = out.length();
-                    out.append(s, i + 2, end);
-                    out.setSpan(new StrikethroughSpan(), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    appendInline(out, s.substring(i + 2, end), colors);
+                    if (out.length() > start) {
+                        out.setSpan(new StrikethroughSpan(), start, out.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
                     i = end + 2;
                     continue;
                 }
@@ -363,9 +426,11 @@ public final class MarkdownRenderer {
                     int end = s.indexOf(marker + marker + marker, i + 3);
                     if (end > i + 3 && isItalicBoundary(s, c, i, end + 3)) {
                         int start = out.length();
-                        out.append(s, i + 3, end);
-                        out.setSpan(new StyleSpan(Typeface.BOLD_ITALIC), start, out.length(),
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        appendInline(out, s.substring(i + 3, end), colors);
+                        if (out.length() > start) {
+                            out.setSpan(new StyleSpan(Typeface.BOLD_ITALIC), start, out.length(),
+                                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        }
                         i = end + 3;
                         continue;
                     }
@@ -375,9 +440,11 @@ public final class MarkdownRenderer {
                     int end = s.indexOf(marker + marker, i + 2);
                     if (end > i + 2 && isItalicBoundary(s, c, i, end + 2)) {
                         int start = out.length();
-                        out.append(s, i + 2, end);
-                        out.setSpan(new StyleSpan(Typeface.BOLD), start, out.length(),
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        appendInline(out, s.substring(i + 2, end), colors);
+                        if (out.length() > start) {
+                            out.setSpan(new StyleSpan(Typeface.BOLD), start, out.length(),
+                                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        }
                         i = end + 2;
                         continue;
                     }
@@ -386,9 +453,11 @@ public final class MarkdownRenderer {
                 int end = s.indexOf(marker, i + 1);
                 if (end > i + 1 && isItalicBoundary(s, c, i, end + 1)) {
                     int start = out.length();
-                    out.append(s, i + 1, end);
-                    out.setSpan(new StyleSpan(Typeface.ITALIC), start, out.length(),
-                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    appendInline(out, s.substring(i + 1, end), colors);
+                    if (out.length() > start) {
+                        out.setSpan(new StyleSpan(Typeface.ITALIC), start, out.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
                     i = end + 1;
                     continue;
                 }
@@ -713,6 +782,48 @@ public final class MarkdownRenderer {
                 || (c >= 0xFE30 && c <= 0xFE6F)
                 || (c >= 0xFF00 && c <= 0xFF60)
                 || (c >= 0xFFE0 && c <= 0xFFE6);
+    }
+
+    /** 只把明确的网址转成可点击链接，普通尖括号文本返回 null。 */
+    private static String normalizeUrl(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String url = raw.trim();
+        if (url.length() == 0 || url.indexOf(' ') >= 0 || url.indexOf('\n') >= 0) {
+            return null;
+        }
+        String lower = url.toLowerCase(Locale.US);
+        if (lower.startsWith("http://") || lower.startsWith("https://")
+                || lower.startsWith("mailto:") || lower.startsWith("tel:")) {
+            return url;
+        }
+        if (lower.startsWith("www.")) {
+            return "https://" + url;
+        }
+        return null;
+    }
+
+    /** 判断 \\\\[2pt] 里的参数是不是合法的行距，避免误吞 [0,1] 这类内容。 */
+    private static boolean isLineBreakSpacing(String spec) {
+        if (spec == null || spec.length() == 0) {
+            return false;
+        }
+        int i = 0;
+        if (spec.charAt(0) == '-') {
+            i++;
+        }
+        int digitsStart = i;
+        while (i < spec.length() && (Character.isDigit(spec.charAt(i)) || spec.charAt(i) == '.')) {
+            i++;
+        }
+        if (i == digitsStart) {
+            return false;
+        }
+        String unit = spec.substring(i).trim().toLowerCase(Locale.US);
+        return unit.equals("pt") || unit.equals("ex") || unit.equals("em")
+                || unit.equals("mm") || unit.equals("cm") || unit.equals("in")
+                || unit.equals("pc") || unit.equals("mu");
     }
 
     /**
@@ -1241,8 +1352,15 @@ public final class MarkdownRenderer {
         if (out.length() > 0) {
             out.append('\n');
         }
+        int start = out.length();
         out.append("  ");
-        appendMathMarked(out, marked, colors, true);
+        if (!appendMathMarked(out, marked, colors, true)) {
+            out.delete(start, out.length());
+            return;
+        }
+        // 块级公式居中显示，更接近论文 / 教材排版
+        out.setSpan(new AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
 
     private static boolean appendMath(SpannableStringBuilder out, String latex, Colors colors,
@@ -1556,6 +1674,14 @@ public final class MarkdownRenderer {
                     pos[0]++;
                     if (next == '\\') {
                         out.append('\n');
+                        // \\[2pt] / \\[1em] 这类行距参数要跳过，否则会把 [2pt] 当正文
+                        if (pos[0] < s.length() && s.charAt(pos[0]) == '[') {
+                            int close = s.indexOf(']', pos[0]);
+                            if (close > pos[0] && isLineBreakSpacing(
+                                    s.substring(pos[0] + 1, close))) {
+                                pos[0] = close + 1;
+                            }
+                        }
                     } else if (next == ' ' || next == ';' || next == ':' || next == '\n') {
                         out.append(' ');
                     } else if (next == ',' || next == '!') {
