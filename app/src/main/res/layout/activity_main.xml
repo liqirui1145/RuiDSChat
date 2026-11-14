@@ -207,6 +207,29 @@
             android:layout_height="1dp"
             android:background="@color/divider" />
 
+        <!-- 思考强度：点按选择本次提问的推理强度 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/surface"
+            android:orientation="horizontal"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:paddingTop="6dp">
+
+            <TextView
+                android:id="@+id/thinking_button"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:text="思考 关闭"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <!-- 扁平输入区：附件 + 输入框 + 圆形发送 -->
         <LinearLayout
             android:layout_width="match_parent"

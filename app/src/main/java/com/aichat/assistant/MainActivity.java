@@ -43,6 +43,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private EditText input;
     private TextView sendButton;
     private TextView attachButton;
+    private TextView thinkingButton;
+    /** 思考强度选项，下标与 Prefs.getReasoningLevel 对应。 */
+    private static final String[] REASONING_LABELS =
+            new String[]{"关闭（直接回答）", "极低", "低", "中", "高"};
     private LinearLayout statusRow;
     private TextView statusText;
     private LinearLayout attachmentRow;
@@ -129,6 +133,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         input = (EditText) findViewById(R.id.input);
         sendButton = (TextView) findViewById(R.id.send_button);
         attachButton = (TextView) findViewById(R.id.attach_button);
+        thinkingButton = (TextView) findViewById(R.id.thinking_button);
         statusRow = (LinearLayout) findViewById(R.id.status_row);
         statusText = (TextView) findViewById(R.id.status_text);
         attachmentRow = (LinearLayout) findViewById(R.id.attachment_row);
@@ -218,6 +223,13 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 pickFile();
             }
         });
+        thinkingButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showReasoningDialog();
+            }
+        });
+        updateThinkingLabel();
         findViewById(R.id.drawer_button).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -484,6 +496,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                     String reply = ApiClient.chatStream(appContext, baseUrl, key, model,
                             Prefs.getSystemPrompt(appContext), prior, sendText, imageDataUri,
                             Prefs.getMaxTokens(appContext),
+                            Prefs.getReasoningLevel(appContext),
                             new ApiClient.StreamCallback() {
                                 @Override
                                 public void onDelta(String text) {
@@ -892,6 +905,32 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         attachmentRow.setVisibility(View.GONE);
         attachmentThumb.setImageDrawable(null);
         attachmentBadge.setVisibility(View.GONE);
+    }
+
+    /** 选择本次提问的思考强度，选项全局记忆。 */
+    private void showReasoningDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("思考强度")
+                .setSingleChoiceItems(REASONING_LABELS, Prefs.getReasoningLevel(this),
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                Prefs.setReasoningLevel(MainActivity.this, which);
+                                updateThinkingLabel();
+                                dialog.dismiss();
+                            }
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateThinkingLabel() {
+        int level = Prefs.getReasoningLevel(this);
+        if (level == 0) {
+            thinkingButton.setText("思考 关闭");
+        } else {
+            thinkingButton.setText("思考 " + REASONING_LABELS[level]);
+        }
     }
 
     private void pickFile() {

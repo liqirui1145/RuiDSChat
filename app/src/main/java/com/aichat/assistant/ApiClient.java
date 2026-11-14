@@ -44,7 +44,7 @@ public final class ApiClient {
         HttpURLConnection connection = null;
         try {
             JSONObject root = buildPayload(model, systemPrompt, history, userText,
-                    imageDataUri, false, 0);
+                    imageDataUri, false, 0, 0);
 
             byte[] payload = root.toString().getBytes("UTF-8");
 
@@ -130,7 +130,7 @@ public final class ApiClient {
     public static String chatStream(Context context, String baseUrl, String apiKey, String model,
                                     String systemPrompt, List<ChatMessage> history,
                                     String userText, String imageDataUri, int maxTokens,
-                                    StreamCallback callback, StreamHandle handle)
+                                    int reasoningLevel, StreamCallback callback, StreamHandle handle)
             throws ApiException {
         ensureTls(context);
 
@@ -140,7 +140,7 @@ public final class ApiClient {
         StringBuilder full = new StringBuilder();
         try {
             JSONObject root = buildPayload(model, systemPrompt, history, userText,
-                    imageDataUri, true, maxTokens);
+                    imageDataUri, true, maxTokens, reasoningLevel);
             byte[] payload = root.toString().getBytes("UTF-8");
 
             connection = (HttpURLConnection) new URL(endpoint).openConnection();
@@ -275,9 +275,14 @@ public final class ApiClient {
         }
     }
 
+    /** 思考强度可选值，与 Prefs.getReasoningLevel 的下标一一对应（0 表示不传）。 */
+    private static final String[] REASONING_EFFORTS =
+            new String[]{"", "minimal", "low", "medium", "high"};
+
     private static JSONObject buildPayload(String model, String systemPrompt,
                                            List<ChatMessage> history, String userText,
-                                           String imageDataUri, boolean stream, int maxTokens)
+                                           String imageDataUri, boolean stream, int maxTokens,
+                                           int reasoningLevel)
             throws Exception {
         JSONObject root = new JSONObject();
         root.put("model", model);
@@ -290,6 +295,10 @@ public final class ApiClient {
         }
         if (maxTokens > 0) {
             root.put("max_tokens", maxTokens);
+        }
+        if (reasoningLevel > 0 && reasoningLevel < REASONING_EFFORTS.length) {
+            // 兼容 OpenAI 系推理接口；不支持该参数的接口通常会忽略
+            root.put("reasoning_effort", REASONING_EFFORTS[reasoningLevel]);
         }
 
         JSONArray messages = new JSONArray();

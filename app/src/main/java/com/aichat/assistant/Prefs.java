@@ -98,6 +98,17 @@ public final class Prefs {
         sp(context).edit().putInt("max_tokens", value < 0 ? 0 : value).apply();
     }
 
+    /** 推理强度：0 关闭，1 极低，2 低，3 中，4 高。 */
+    public static int getReasoningLevel(Context context) {
+        int value = sp(context).getInt("reasoning_level", 0);
+        return value < 0 ? 0 : (value > 4 ? 4 : value);
+    }
+
+    public static void setReasoningLevel(Context context, int value) {
+        sp(context).edit().putInt("reasoning_level", value < 0 ? 0 : (value > 4 ? 4 : value))
+                .apply();
+    }
+
     /** 每次请求携带的历史消息条数，0 表示不限制（仍受字符预算限制）。 */
     public static int getContextMessages(Context context) {
         return sp(context).getInt("context_messages", 20);
