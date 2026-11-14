@@ -87,6 +87,15 @@ public final class Prefs {
         sp(context).edit().putString("system_prompt", value).apply();
     }
 
+    /** 最大回复 tokens，0 表示不传该参数、使用接口默认值。 */
+    public static int getMaxTokens(Context context) {
+        return sp(context).getInt("max_tokens", 0);
+    }
+
+    public static void setMaxTokens(Context context, int value) {
+        sp(context).edit().putInt("max_tokens", value < 0 ? 0 : value).apply();
+    }
+
     public static boolean isDarkMode(Context context) {
         return sp(context).getBoolean("dark_mode", false);
     }

@@ -93,6 +93,20 @@
                 android:hint="deepseek-chat"
                 android:inputType="text" />
 
+            <TextView
+                style="@style/FieldLabel"
+                android:text="最大回复长度（tokens）" />
+
+            <EditText
+                android:id="@+id/max_tokens_input"
+                style="@style/FieldInput"
+                android:hint="0 表示不限制"
+                android:inputType="number" />
+
+            <TextView
+                style="@style/FieldHint"
+                android:text="留空或填 0 使用接口默认上限；设置较小值可避免生成过长内容。" />
+
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"

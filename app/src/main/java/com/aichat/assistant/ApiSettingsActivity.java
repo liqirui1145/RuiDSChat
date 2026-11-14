@@ -13,6 +13,7 @@ public class ApiSettingsActivity extends BaseActivity {
     private EditText apiKeyInput;
     private EditText baseUrlInput;
     private EditText chatModelInput;
+    private EditText maxTokensInput;
     private EditText visionBaseUrlInput;
     private EditText visionModelInput;
     private EditText visionKeyInput;
@@ -25,6 +26,7 @@ public class ApiSettingsActivity extends BaseActivity {
         apiKeyInput = (EditText) findViewById(R.id.api_key_input);
         baseUrlInput = (EditText) findViewById(R.id.base_url_input);
         chatModelInput = (EditText) findViewById(R.id.chat_model_input);
+        maxTokensInput = (EditText) findViewById(R.id.max_tokens_input);
         visionBaseUrlInput = (EditText) findViewById(R.id.vision_base_url_input);
         visionModelInput = (EditText) findViewById(R.id.vision_model_input);
         visionKeyInput = (EditText) findViewById(R.id.vision_key_input);
@@ -32,6 +34,8 @@ public class ApiSettingsActivity extends BaseActivity {
         apiKeyInput.setText(Prefs.getApiKey(this));
         baseUrlInput.setText(Prefs.getBaseUrl(this));
         chatModelInput.setText(Prefs.getChatModel(this));
+        int maxTokens = Prefs.getMaxTokens(this);
+        maxTokensInput.setText(maxTokens > 0 ? String.valueOf(maxTokens) : "");
         visionBaseUrlInput.setText(Prefs.getVisionBaseUrl(this));
         visionModelInput.setText(Prefs.getVisionModel(this));
         visionKeyInput.setText(Prefs.getVisionKey(this));
@@ -64,6 +68,12 @@ public class ApiSettingsActivity extends BaseActivity {
         Prefs.setApiKey(this, apiKeyInput.getText().toString().trim());
         Prefs.setBaseUrl(this, baseUrl);
         Prefs.setChatModel(this, chatModel);
+        int maxTokens = 0;
+        try {
+            maxTokens = Integer.parseInt(maxTokensInput.getText().toString().trim());
+        } catch (NumberFormatException ignored) {
+        }
+        Prefs.setMaxTokens(this, maxTokens);
         Prefs.setVisionBaseUrl(this, visionBaseUrlInput.getText().toString().trim());
         Prefs.setVisionModel(this, visionModelInput.getText().toString().trim());
         Prefs.setVisionKey(this, visionKeyInput.getText().toString().trim());

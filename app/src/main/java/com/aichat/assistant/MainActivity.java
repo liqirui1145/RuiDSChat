@@ -64,6 +64,30 @@ public class MainActivity extends BaseActivity {
     private boolean pendingImage;
     private boolean sending;
 
+    private static final long STREAM_REFRESH_MS = 80;
+
+    private volatile ApiClient.StreamHandle streamHandle;
+    private ChatMessage streamingMessage;
+    private final StringBuilder streamBuffer = new StringBuilder();
+    private volatile boolean streamRefreshScheduled;
+    private String streamFinishReason;
+
+    /** 流式增量节流刷新，避免每个 token 都重绘整条消息。 */
+    private final Runnable streamRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            streamRefreshScheduled = false;
+            ChatMessage target = streamingMessage;
+            if (target == null) {
+                return;
+            }
+            target.setText(snapshotStream());
+            hideStatus();
+            adapter.notifyDataSetChanged();
+            scrollToBottom();
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -102,7 +126,11 @@ public class MainActivity extends BaseActivity {
         sendButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                sendMessage();
+                if (sending) {
+                    stopGeneration();
+                } else {
+                    sendMessage();
+                }
             }
         });
         attachButton.setOnClickListener(new View.OnClickListener() {
@@ -216,6 +244,9 @@ public class MainActivity extends BaseActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (streamHandle != null) {
+            streamHandle.cancel();
+        }
         handler.removeCallbacksAndMessages(null);
         executor.shutdownNow();
     }
@@ -288,6 +319,19 @@ public class MainActivity extends BaseActivity {
         final List<ChatMessage> prior = new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1));
         final Context appContext = getApplicationContext();
 
+        streamFinishReason = null;
+        synchronized (streamBuffer) {
+            streamBuffer.setLength(0);
+        }
+        streamRefreshScheduled = false;
+        final ApiClient.StreamHandle handle = new ApiClient.StreamHandle();
+        streamHandle = handle;
+        final ChatMessage placeholder = new ChatMessage(ChatMessage.ROLE_ASSISTANT, "正在思考…");
+        streamingMessage = placeholder;
+        messages.add(placeholder);
+        adapter.notifyDataSetChanged();
+        scrollToBottom();
+
         executor.execute(new Runnable() {
             @Override
             public void run() {
@@ -332,41 +376,134 @@ public class MainActivity extends BaseActivity {
                         }
                     }
 
-                    String reply = ApiClient.chat(appContext, baseUrl, key, model,
-                            Prefs.getSystemPrompt(appContext), prior, sendText, imageDataUri);
-                    finishRequest(null, reply);
-                } catch (Exception e) {
-                    String error = e.getMessage();
-                    if (error == null || error.trim().length() == 0) {
-                        error = "发生未知错误，请稍后重试";
+                    String reply = ApiClient.chatStream(appContext, baseUrl, key, model,
+                            Prefs.getSystemPrompt(appContext), prior, sendText, imageDataUri,
+                            Prefs.getMaxTokens(appContext),
+                            new ApiClient.StreamCallback() {
+                                @Override
+                                public void onDelta(String text) {
+                                    onStreamDelta(text);
+                                }
+
+                                @Override
+                                public void onFinish(String finishReason) {
+                                    if (finishReason != null) {
+                                        streamFinishReason = finishReason;
+                                    }
+                                }
+                            }, handle);
+
+                    if (handle.isCancelled()) {
+                        finishStream(null, reply, null, true);
+                    } else if (reply.length() == 0) {
+                        finishStream("模型没有返回文字内容，请稍后重试", null, streamFinishReason, false);
+                    } else {
+                        finishStream(null, reply, streamFinishReason, false);
                     }
-                    finishRequest(error, null);
+                } catch (Exception e) {
+                    if (handle.isCancelled()) {
+                        finishStream(null, null, null, true);
+                    } else {
+                        String error = e.getMessage();
+                        if (error == null || error.trim().length() == 0) {
+                            error = "发生未知错误，请稍后重试";
+                        }
+                        finishStream(error, snapshotStream(), null, false);
+                    }
                 }
             }
         });
     }
 
-    private void finishRequest(final String error, final String reply) {
+    private void stopGeneration() {
+        if (!sending) {
+            return;
+        }
+        ApiClient.StreamHandle current = streamHandle;
+        if (current != null) {
+            current.cancel();
+        }
+        showStatus("正在停止…");
+    }
+
+    private void onStreamDelta(String piece) {
+        synchronized (streamBuffer) {
+            streamBuffer.append(piece);
+        }
+        if (!streamRefreshScheduled) {
+            streamRefreshScheduled = true;
+            handler.postDelayed(streamRefreshRunnable, STREAM_REFRESH_MS);
+        }
+    }
+
+    private String snapshotStream() {
+        synchronized (streamBuffer) {
+            return streamBuffer.toString();
+        }
+    }
+
+    private void finishStream(final String error, final String reply, final String finishReason,
+                              final boolean cancelled) {
         handler.post(new Runnable() {
             @Override
             public void run() {
                 if (isFinishing()) {
                     return;
                 }
+                handler.removeCallbacks(streamRefreshRunnable);
+                streamRefreshScheduled = false;
                 sending = false;
                 setBusy(false);
                 hideStatus();
-                if (reply != null) {
-                    messages.add(new ChatMessage(ChatMessage.ROLE_ASSISTANT, reply));
-                } else {
-                    messages.add(new ChatMessage(ChatMessage.ROLE_ERROR,
-                            error == null ? "请求失败，请稍后重试" : error));
+
+                ChatMessage target = streamingMessage;
+                streamingMessage = null;
+                streamHandle = null;
+
+                String text = reply == null ? "" : reply;
+                if (cancelled) {
+                    if (text.trim().length() == 0) {
+                        if (target != null) {
+                            messages.remove(target);
+                        }
+                    } else {
+                        text = appendNotice(text, "（已停止生成）");
+                    }
                 }
+                if ("length".equals(finishReason)) {
+                    text = appendNotice(text, "（回复达到长度上限被截断，可发送「继续」让模型接着写。）");
+                }
+                if (error != null) {
+                    if (text.trim().length() == 0) {
+                        if (target != null) {
+                            messages.remove(target);
+                        }
+                        messages.add(new ChatMessage(ChatMessage.ROLE_ERROR, error));
+                    } else {
+                        text = appendNotice(text, "（连接中断：" + error + "）");
+                    }
+                }
+
+                if (text.trim().length() > 0) {
+                    if (target != null) {
+                        target.setText(text);
+                    } else {
+                        messages.add(new ChatMessage(ChatMessage.ROLE_ASSISTANT, text));
+                    }
+                }
+
                 adapter.notifyDataSetChanged();
                 scrollToBottom();
                 persistConversations();
             }
         });
+    }
+
+    private static String appendNotice(String text, String notice) {
+        if (text == null || text.length() == 0) {
+            return notice;
+        }
+        return text + "\n\n" + notice;
     }
 
     private void showAttachment() {
@@ -506,7 +643,7 @@ public class MainActivity extends BaseActivity {
 
     private void newConversation() {
         if (sending) {
-            toast("请等待当前回复完成");
+            toast("请先点击「停止」结束当前回复");
             return;
         }
         if (messages.isEmpty() && current.getTitle().trim().length() == 0) {
@@ -537,7 +674,7 @@ public class MainActivity extends BaseActivity {
             return;
         }
         if (sending) {
-            toast("请等待当前回复完成");
+            toast("请先点击「停止」结束当前回复");
             return;
         }
         saveCurrentConversation();
@@ -603,7 +740,7 @@ public class MainActivity extends BaseActivity {
 
     private void deleteConversation(final Conversation conversation) {
         if (sending) {
-            toast("请等待当前回复完成");
+            toast("请先点击「停止」结束当前回复");
             return;
         }
         new AlertDialog.Builder(this)
@@ -667,7 +804,9 @@ public class MainActivity extends BaseActivity {
     }
 
     private void setBusy(boolean busy) {
-        sendButton.setEnabled(!busy);
+        // 生成过程中「发送」变为「停止」，保持可点击
+        sendButton.setEnabled(true);
+        sendButton.setText(busy ? "停止" : "发送");
         attachButton.setEnabled(!busy);
         attachButton.setAlpha(busy ? 0.5f : 1.0f);
     }

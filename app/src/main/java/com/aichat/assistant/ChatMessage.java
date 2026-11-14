@@ -10,7 +10,7 @@ public class ChatMessage {
     public static final int ROLE_ERROR = 2;
 
     private final int role;
-    private final String text;
+    private String text;
     private String attachmentName;
     /** 实际发送给模型的内容（可能包含文件全文），不持久化。 */
     private String sendText;
@@ -26,6 +26,11 @@ public class ChatMessage {
 
     public String getText() {
         return text;
+    }
+
+    /** 流式回复时逐步更新内容。 */
+    public void setText(String text) {
+        this.text = text == null ? "" : text;
     }
 
     public String getAttachmentName() {

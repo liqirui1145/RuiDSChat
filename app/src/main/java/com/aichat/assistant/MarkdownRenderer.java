@@ -14,6 +14,7 @@ import android.text.style.SubscriptSpan;
 import android.text.style.SuperscriptSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.UnderlineSpan;
+import android.util.DisplayMetrics;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -157,6 +158,7 @@ public final class MarkdownRenderer {
                     && isTableSeparator(lines[i + 1].trim())) {
                 List<String[]> rows = new ArrayList<String[]>();
                 rows.add(splitRow(trimmed));
+                int[] aligns = parseAlignments(lines[i + 1].trim());
                 int next = i + 2;
                 while (next < lines.length) {
                     String rowLine = lines[next].trim();
@@ -167,7 +169,7 @@ public final class MarkdownRenderer {
                     rows.add(splitRow(rowLine));
                     next++;
                 }
-                appendTable(out, rows, colors);
+                appendTable(out, rows, aligns, tableColumnBudget(context), colors);
                 i = next - 1;
                 continue;
             }
@@ -481,7 +483,49 @@ public final class MarkdownRenderer {
         return sb.toString().trim();
     }
 
-    private static void appendTable(SpannableStringBuilder out, List<String[]> rows, Colors colors) {
+    private static final int ALIGN_LEFT = 0;
+    private static final int ALIGN_CENTER = 1;
+    private static final int ALIGN_RIGHT = 2;
+    /** 压缩列宽时保留的最小宽度（按等宽字符计）。 */
+    private static final int MIN_COLUMN_WIDTH = 4;
+
+    /** 解析 |---|:---:|---:| 里的对齐标记。 */
+    private static int[] parseAlignments(String separator) {
+        String[] cells = splitRow(separator);
+        int[] aligns = new int[cells.length];
+        for (int c = 0; c < cells.length; c++) {
+            String spec = cells[c].trim();
+            boolean left = spec.startsWith(":");
+            boolean right = spec.endsWith(":");
+            if (left && right) {
+                aligns[c] = ALIGN_CENTER;
+            } else if (right) {
+                aligns[c] = ALIGN_RIGHT;
+            } else {
+                aligns[c] = ALIGN_LEFT;
+            }
+        }
+        return aligns;
+    }
+
+    /** 按屏幕宽度估算表格一行最多能放多少个等宽字符。 */
+    private static int tableColumnBudget(Context context) {
+        DisplayMetrics dm = context.getResources().getDisplayMetrics();
+        float charPx = 0.62f * 15f * dm.scaledDensity;
+        if (charPx <= 0) {
+            return 40;
+        }
+        // 左右列表内边距 + 气泡内边距，约 54dp
+        int available = dm.widthPixels - (int) (54 * dm.density);
+        int columns = (int) (available / charPx);
+        if (columns < 12) {
+            columns = 12;
+        }
+        return Math.min(columns, 120);
+    }
+
+    private static void appendTable(SpannableStringBuilder out, List<String[]> rows,
+                                    int[] aligns, int maxColumns, Colors colors) {
         if (rows.isEmpty()) {
             return;
         }
@@ -505,17 +549,38 @@ public final class MarkdownRenderer {
             }
         }
 
+        // 总宽超屏时逐步压缩最宽的一列，配合单元格折行避免横向溢出
+        int gap = 3 * (cols - 1);
+        int total = gap;
+        for (int c = 0; c < cols; c++) {
+            total += widths[c];
+        }
+        while (total > maxColumns) {
+            int widest = -1;
+            for (int c = 0; c < cols; c++) {
+                if (widths[c] > MIN_COLUMN_WIDTH && (widest < 0 || widths[c] > widths[widest])) {
+                    widest = c;
+                }
+            }
+            if (widest < 0) {
+                break;
+            }
+            widths[widest]--;
+            total--;
+        }
+
         if (out.length() > 0) {
             out.append('\n');
         }
 
-        appendTableRow(out, rows.get(0), widths, true, colors);
+        appendTableRow(out, rows.get(0), widths, aligns, true, colors);
 
         out.append('\n');
         int ruleStart = out.length();
         for (int c = 0; c < cols; c++) {
+            // 数据行用 " │ " 分隔，分隔线用 "─┼─" 才能逐列对齐
             if (c > 0) {
-                out.append("┼");
+                out.append("─┼─");
             }
             for (int k = 0; k < widths[c]; k++) {
                 out.append("─");
@@ -526,24 +591,55 @@ public final class MarkdownRenderer {
 
         for (int r = 1; r < rows.size(); r++) {
             out.append('\n');
-            appendTableRow(out, rows.get(r), widths, false, colors);
+            appendTableRow(out, rows.get(r), widths, aligns, false, colors);
         }
     }
 
     private static void appendTableRow(SpannableStringBuilder out, String[] row, int[] widths,
-                                       boolean header, Colors colors) {
+                                       int[] aligns, boolean header, Colors colors) {
         int start = out.length();
+
+        // 先按列宽把每个单元格折成多行，再按最长的一列逐行输出
+        List<List<String>> wrapped = new ArrayList<List<String>>();
+        int lineCount = 1;
         for (int c = 0; c < widths.length; c++) {
-            if (c > 0) {
-                out.append(" │ ");
-            }
             String cell = c < row.length ? row[c] : "";
-            out.append(cell);
-            int pad = widths[c] - displayWidth(cell);
-            for (int k = 0; k < pad; k++) {
-                out.append(' ');
+            List<String> parts = wrapCell(cell, widths[c]);
+            wrapped.add(parts);
+            lineCount = Math.max(lineCount, parts.size());
+        }
+
+        for (int line = 0; line < lineCount; line++) {
+            if (line > 0) {
+                out.append('\n');
+            }
+            for (int c = 0; c < widths.length; c++) {
+                if (c > 0) {
+                    out.append(" │ ");
+                }
+                List<String> parts = wrapped.get(c);
+                String cell = line < parts.size() ? parts.get(line) : "";
+                int pad = widths[c] - displayWidth(cell);
+                int leftPad = 0;
+                int rightPad = pad;
+                int align = c < aligns.length ? aligns[c] : ALIGN_LEFT;
+                if (align == ALIGN_RIGHT) {
+                    leftPad = pad;
+                    rightPad = 0;
+                } else if (align == ALIGN_CENTER) {
+                    leftPad = pad / 2;
+                    rightPad = pad - leftPad;
+                }
+                for (int k = 0; k < leftPad; k++) {
+                    out.append(' ');
+                }
+                out.append(cell);
+                for (int k = 0; k < rightPad; k++) {
+                    out.append(' ');
+                }
             }
         }
+
         int end = out.length();
         out.setSpan(new TypefaceSpan("monospace"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         if (header) {
@@ -551,6 +647,45 @@ public final class MarkdownRenderer {
             out.setSpan(new ForegroundColorSpan(colors.codeText), start, end,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
+    }
+
+    /** 按显示宽度折行，中文等宽字符占 2 列。 */
+    private static List<String> wrapCell(String cell, int width) {
+        List<String> lines = new ArrayList<String>();
+        if (width < 1) {
+            width = 1;
+        }
+        if (cell.length() == 0) {
+            lines.add("");
+            return lines;
+        }
+        StringBuilder current = new StringBuilder();
+        int currentWidth = 0;
+        int i = 0;
+        while (i < cell.length()) {
+            char c = cell.charAt(i);
+            int charLength = 1;
+            int charWidth;
+            if (Character.isHighSurrogate(c) && i + 1 < cell.length()
+                    && Character.isLowSurrogate(cell.charAt(i + 1))) {
+                charWidth = 2;
+                charLength = 2;
+            } else {
+                charWidth = isWideChar(c) ? 2 : 1;
+            }
+            if (currentWidth + charWidth > width && currentWidth > 0) {
+                lines.add(current.toString());
+                current.setLength(0);
+                currentWidth = 0;
+            }
+            current.append(cell, i, i + charLength);
+            currentWidth += charWidth;
+            i += charLength;
+        }
+        if (current.length() > 0 || lines.isEmpty()) {
+            lines.add(current.toString());
+        }
+        return lines;
     }
 
     /** 按「中文占 2 列、西文占 1 列」估算显示宽度，让表格在等宽字体下对齐。 */

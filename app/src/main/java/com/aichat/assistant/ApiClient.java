@@ -43,50 +43,8 @@ public final class ApiClient {
         String endpoint = buildEndpoint(baseUrl);
         HttpURLConnection connection = null;
         try {
-            JSONObject root = new JSONObject();
-            root.put("model", model);
-            root.put("stream", false);
-
-            JSONArray messages = new JSONArray();
-            if (systemPrompt != null && systemPrompt.trim().length() > 0) {
-                JSONObject system = new JSONObject();
-                system.put("role", "system");
-                system.put("content", systemPrompt.trim());
-                messages.put(system);
-            }
-
-            for (ChatMessage message : history) {
-                if (message.getRole() == ChatMessage.ROLE_ERROR) {
-                    continue;
-                }
-                JSONObject item = new JSONObject();
-                item.put("role", message.getRole() == ChatMessage.ROLE_USER ? "user" : "assistant");
-                item.put("content", message.getText());
-                messages.put(item);
-            }
-
-            JSONObject last = new JSONObject();
-            last.put("role", "user");
-            if (imageDataUri != null) {
-                JSONArray parts = new JSONArray();
-                JSONObject textPart = new JSONObject();
-                textPart.put("type", "text");
-                textPart.put("text", userText);
-                parts.put(textPart);
-
-                JSONObject imagePart = new JSONObject();
-                imagePart.put("type", "image_url");
-                JSONObject imageUrl = new JSONObject();
-                imageUrl.put("url", imageDataUri);
-                imagePart.put("image_url", imageUrl);
-                parts.put(imagePart);
-
-                last.put("content", parts);
-            } else {
-                last.put("content", userText);
-            }
-            messages.put(last);
-            root.put("messages", messages);
+            JSONObject root = buildPayload(model, systemPrompt, history, userText,
+                    imageDataUri, false, 0);
 
             byte[] payload = root.toString().getBytes("UTF-8");
 
@@ -128,6 +86,228 @@ public final class ApiClient {
                 connection.disconnect();
             }
         }
+    }
+
+    /** 流式增量回调，运行在后台线程，界面刷新需要自行切回主线程。 */
+    public interface StreamCallback {
+        void onDelta(String text);
+
+        void onFinish(String finishReason);
+    }
+
+    /** 用于中断进行中的流式请求。 */
+    public static final class StreamHandle {
+
+        private volatile boolean cancelled;
+        private volatile HttpURLConnection connection;
+
+        public void cancel() {
+            cancelled = true;
+            HttpURLConnection current = connection;
+            if (current != null) {
+                try {
+                    current.disconnect();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
+    /**
+     * 流式对话：逐段回调 delta.content，返回完整回复。
+     * 被取消时返回已经收到的部分内容，不抛出异常。
+     */
+    public static String chatStream(Context context, String baseUrl, String apiKey, String model,
+                                    String systemPrompt, List<ChatMessage> history,
+                                    String userText, String imageDataUri, int maxTokens,
+                                    StreamCallback callback, StreamHandle handle)
+            throws ApiException {
+        ensureTls(context);
+
+        String endpoint = buildEndpoint(baseUrl);
+        HttpURLConnection connection = null;
+        BufferedReader reader = null;
+        StringBuilder full = new StringBuilder();
+        try {
+            JSONObject root = buildPayload(model, systemPrompt, history, userText,
+                    imageDataUri, true, maxTokens);
+            byte[] payload = root.toString().getBytes("UTF-8");
+
+            connection = (HttpURLConnection) new URL(endpoint).openConnection();
+            if (handle != null) {
+                handle.connection = connection;
+            }
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(30000);
+            connection.setReadTimeout(180000);
+            connection.setDoOutput(true);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setRequestProperty("Accept", "text/event-stream");
+            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            connection.setRequestProperty("User-Agent", "AiChatAssistant/1.0 (Android)");
+            connection.setFixedLengthStreamingMode(payload.length);
+
+            OutputStream output = connection.getOutputStream();
+            output.write(payload);
+            output.flush();
+            output.close();
+
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) {
+                String body = readAll(connection.getErrorStream());
+                throw new ApiException(httpError(code, body, imageDataUri != null));
+            }
+
+            reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
+            String finishReason = null;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (handle != null && handle.isCancelled()) {
+                    break;
+                }
+                String trimmed = line.trim();
+                if (trimmed.length() == 0 || trimmed.startsWith(":") || !trimmed.startsWith("data:")) {
+                    // 空行与 ": keep-alive" 注释行直接跳过
+                    continue;
+                }
+                String data = trimmed.substring(5).trim();
+                if (data.length() == 0) {
+                    continue;
+                }
+                if ("[DONE]".equals(data)) {
+                    break;
+                }
+                try {
+                    JSONObject chunk = new JSONObject(data);
+                    JSONObject error = chunk.optJSONObject("error");
+                    if (error != null) {
+                        throw new ApiException("模型返回错误："
+                                + error.optString("message", "未知错误"));
+                    }
+                    JSONArray choices = chunk.optJSONArray("choices");
+                    if (choices == null || choices.length() == 0) {
+                        continue;
+                    }
+                    JSONObject choice = choices.optJSONObject(0);
+                    if (choice == null) {
+                        continue;
+                    }
+                    JSONObject delta = choice.optJSONObject("delta");
+                    String piece = "";
+                    if (delta != null) {
+                        piece = delta.optString("content", "");
+                        if ((piece == null || piece.length() == 0)) {
+                            // 兼容把增量放在 message 里的实现
+                            JSONObject message = delta.optJSONObject("message");
+                            if (message != null) {
+                                piece = message.optString("content", "");
+                            }
+                        }
+                    }
+                    if (piece != null && piece.length() > 0) {
+                        full.append(piece);
+                        if (callback != null) {
+                            callback.onDelta(piece);
+                        }
+                    }
+                    String reason = choice.optString("finish_reason", "");
+                    if (reason != null && reason.length() > 0 && !"null".equals(reason)) {
+                        finishReason = reason;
+                    }
+                } catch (ApiException e) {
+                    throw e;
+                } catch (Exception ignored) {
+                    // 忽略无法解析的保活数据
+                }
+            }
+
+            if (callback != null) {
+                callback.onFinish(finishReason);
+            }
+            return full.toString().trim();
+        } catch (ApiException e) {
+            if (handle != null && handle.isCancelled()) {
+                return full.toString().trim();
+            }
+            throw e;
+        } catch (Exception e) {
+            if (handle != null && handle.isCancelled()) {
+                return full.toString().trim();
+            }
+            throw new ApiException(networkError(e), e);
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException ignored) {
+                }
+            }
+            if (connection != null) {
+                connection.disconnect();
+            }
+            if (handle != null) {
+                handle.connection = null;
+            }
+        }
+    }
+
+    private static JSONObject buildPayload(String model, String systemPrompt,
+                                           List<ChatMessage> history, String userText,
+                                           String imageDataUri, boolean stream, int maxTokens)
+            throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("model", model);
+        root.put("stream", stream);
+        if (maxTokens > 0) {
+            root.put("max_tokens", maxTokens);
+        }
+
+        JSONArray messages = new JSONArray();
+        if (systemPrompt != null && systemPrompt.trim().length() > 0) {
+            JSONObject system = new JSONObject();
+            system.put("role", "system");
+            system.put("content", systemPrompt.trim());
+            messages.put(system);
+        }
+
+        for (ChatMessage message : history) {
+            if (message.getRole() == ChatMessage.ROLE_ERROR) {
+                continue;
+            }
+            JSONObject item = new JSONObject();
+            item.put("role", message.getRole() == ChatMessage.ROLE_USER ? "user" : "assistant");
+            item.put("content", message.getText());
+            messages.put(item);
+        }
+
+        JSONObject last = new JSONObject();
+        last.put("role", "user");
+        if (imageDataUri != null) {
+            JSONArray parts = new JSONArray();
+            JSONObject textPart = new JSONObject();
+            textPart.put("type", "text");
+            textPart.put("text", userText);
+            parts.put(textPart);
+
+            JSONObject imagePart = new JSONObject();
+            imagePart.put("type", "image_url");
+            JSONObject imageUrl = new JSONObject();
+            imageUrl.put("url", imageDataUri);
+            imagePart.put("image_url", imageUrl);
+            parts.put(imagePart);
+
+            last.put("content", parts);
+        } else {
+            last.put("content", userText);
+        }
+        messages.put(last);
+        root.put("messages", messages);
+        return root;
     }
 
     private static String parseContent(String body, int code, boolean usedImage)
