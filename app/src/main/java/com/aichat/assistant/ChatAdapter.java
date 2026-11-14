@@ -27,6 +27,17 @@ public class ChatAdapter extends BaseAdapter {
         CharSequence text;
     }
 
+    /** 长按消息的操作回调。 */
+    public interface OnMessageActionListener {
+        void onMessageLongClick(ChatMessage message);
+    }
+
+    private OnMessageActionListener actionListener;
+
+    public void setMessageActionListener(OnMessageActionListener listener) {
+        this.actionListener = listener;
+    }
+
     public ChatAdapter(Context context, List<ChatMessage> messages) {
         this.context = context;
         this.messages = messages;
@@ -102,6 +113,19 @@ public class ChatAdapter extends BaseAdapter {
             bubble.setMovementMethod(null);
             bubble.setText(content);
         }
+
+        View.OnLongClickListener longClick = new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                if (actionListener == null) {
+                    return false;
+                }
+                actionListener.onMessageLongClick(msg);
+                return true;
+            }
+        };
+        view.setOnLongClickListener(longClick);
+        bubble.setOnLongClickListener(longClick);
         return view;
     }
 }

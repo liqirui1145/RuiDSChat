@@ -27,7 +27,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MainActivity extends BaseActivity {
+public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageActionListener {
 
     private static final int REQUEST_PICK_FILE = 1001;
 
@@ -116,6 +116,7 @@ public class MainActivity extends BaseActivity {
         loadConversations();
 
         adapter = new ChatAdapter(this, messages);
+        adapter.setMessageActionListener(this);
         messageList.setAdapter(adapter);
         View emptyView = findViewById(R.id.empty_state);
         messageList.setEmptyView(emptyView);
@@ -319,13 +320,19 @@ public class MainActivity extends BaseActivity {
         clearAttachment();
         persistConversations();
 
+        final List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
+                Prefs.getContextMessages(this));
+        startStreaming(prior, userText, uri, fileName, image);
+    }
+
+    /** 发起流式请求；首次提问和重新生成共用这套流程。 */
+    private void startStreaming(final List<ChatMessage> prior, final String userText,
+                                final Uri uri, final String fileName, final boolean image) {
         sending = true;
         setBusy(true);
         showStatus("正在准备…");
 
-        final List<ChatMessage> prior = ContextWindow.trim(
-                new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
-                Prefs.getContextMessages(this));
         final Context appContext = getApplicationContext();
 
         streamFinishReason = null;
@@ -365,7 +372,7 @@ public class MainActivity extends BaseActivity {
                     updateStatus("正在等待模型回复…");
 
                     String baseUrl = Prefs.getBaseUrl(appContext);
-                    String key = apiKey;
+                    String key = Prefs.getApiKey(appContext);
                     String model = Prefs.getChatModel(appContext);
                     if (imageDataUri != null) {
                         String visionBase = Prefs.getVisionBaseUrl(appContext);
@@ -428,11 +435,138 @@ public class MainActivity extends BaseActivity {
         if (!sending) {
             return;
         }
-        ApiClient.StreamHandle current = streamHandle;
-        if (current != null) {
-            current.cancel();
+        ApiClient.StreamHandle handle = streamHandle;
+        if (handle != null) {
+            handle.cancel();
         }
         showStatus("正在停止…");
+    }
+
+    @Override
+    public void onMessageLongClick(final ChatMessage message) {
+        final List<String> actions = new ArrayList<String>();
+        actions.add("复制内容");
+        if (message.getRole() == ChatMessage.ROLE_ASSISTANT) {
+            actions.add("重新生成");
+        }
+        actions.add("删除这条");
+        actions.add("导出 / 分享对话");
+
+        new AlertDialog.Builder(this)
+                .setTitle("消息操作")
+                .setItems(actions.toArray(new String[0]), new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        String action = actions.get(which);
+                        if ("复制内容".equals(action)) {
+                            copyMessage(message);
+                        } else if ("重新生成".equals(action)) {
+                            confirmRegenerate(message);
+                        } else if ("删除这条".equals(action)) {
+                            deleteMessage(message);
+                        } else {
+                            exportConversation();
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private void copyMessage(ChatMessage message) {
+        ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (manager == null) {
+            return;
+        }
+        manager.setPrimaryClip(ClipData.newPlainText("消息内容", message.getText()));
+        toast("已复制到剪贴板");
+    }
+
+    private void deleteMessage(ChatMessage message) {
+        if (sending) {
+            toast("回复正在生成，请先停止");
+            return;
+        }
+        messages.remove(message);
+        adapter.notifyDataSetChanged();
+        persistConversations();
+    }
+
+    private void confirmRegenerate(final ChatMessage message) {
+        if (sending) {
+            toast("请先停止当前回复");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("重新生成")
+                .setMessage("将删除这条回复及其之后的内容，并重新向模型提问，确定吗？")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("重新生成", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        regenerate(message);
+                    }
+                })
+                .show();
+    }
+
+    private void regenerate(ChatMessage message) {
+        int index = messages.indexOf(message);
+        if (index < 0) {
+            return;
+        }
+        int userIndex = -1;
+        for (int i = index - 1; i >= 0; i--) {
+            if (messages.get(i).getRole() == ChatMessage.ROLE_USER) {
+                userIndex = i;
+                break;
+            }
+        }
+        if (userIndex < 0) {
+            toast("没有找到对应的提问，无法重新生成");
+            return;
+        }
+        String question = messages.get(userIndex).getText();
+        while (messages.size() > userIndex + 1) {
+            messages.remove(messages.size() - 1);
+        }
+        adapter.notifyDataSetChanged();
+        persistConversations();
+
+        List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages), Prefs.getContextMessages(this));
+        startStreaming(prior, question, null, null, false);
+    }
+
+    private void exportConversation() {
+        boolean hasContent = false;
+        for (ChatMessage message : messages) {
+            if (message.getRole() == ChatMessage.ROLE_USER
+                    || message.getRole() == ChatMessage.ROLE_ASSISTANT) {
+                hasContent = true;
+                break;
+            }
+        }
+        if (!hasContent) {
+            toast("当前对话还没有内容");
+            return;
+        }
+        StringBuilder builder = new StringBuilder();
+        builder.append("# ").append(current.getDisplayTitle()).append("\n\n");
+        for (ChatMessage message : messages) {
+            if (message.getRole() == ChatMessage.ROLE_USER) {
+                builder.append("## 我\n\n");
+            } else if (message.getRole() == ChatMessage.ROLE_ASSISTANT) {
+                builder.append("## AI\n\n");
+            } else {
+                continue;
+            }
+            builder.append(message.getText()).append("\n\n");
+        }
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_SUBJECT, current.getDisplayTitle());
+        intent.putExtra(Intent.EXTRA_TEXT, builder.toString());
+        startActivity(Intent.createChooser(intent, "导出对话"));
     }
 
     private void onStreamDelta(String piece) {
