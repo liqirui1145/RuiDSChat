@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.aichat.assistant'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.aichat.assistant"
+        minSdk 19
+        targetSdk 34
+        versionCode 5
+        versionName "1.5"
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file("keystore.jks")
+            storePassword "aichat2024"
+            keyAlias "aichat"
+            keyPassword "aichat2024"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
