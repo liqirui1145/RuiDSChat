@@ -1,0 +1,12 @@
+# 构建产物
+build/
+.gradle/
+captures/
+*.iml
+.idea/
+local.properties
+
+# 签名文件：绝不入库
+*.jks
+*.keystore
+keystore.jks
