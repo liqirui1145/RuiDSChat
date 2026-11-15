@@ -20,6 +20,8 @@ public class Conversation {
     private boolean messagesLoaded;
     /** 置顶会话排在抽屉列表最前面。 */
     private boolean pinned;
+    /** 归档会话默认折叠，不占用抽屉主列表。 */
+    private boolean archived;
 
     public Conversation(String id, String title, long updatedAt) {
         this.id = id == null ? UUID.randomUUID().toString() : id;
@@ -108,6 +110,14 @@ public class Conversation {
 
     public void setPinned(boolean pinned) {
         this.pinned = pinned;
+    }
+
+    public boolean isArchived() {
+        return archived;
+    }
+
+    public void setArchived(boolean archived) {
+        this.archived = archived;
     }
 
     public static Conversation fromJson(JSONObject o) {

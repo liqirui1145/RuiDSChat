@@ -9,6 +9,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -19,7 +20,7 @@ import java.util.Set;
 public class ChatStore extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "chat_history.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
 
     private final Context context;
 
@@ -36,7 +37,8 @@ public class ChatStore extends SQLiteOpenHelper {
                 + "display_title TEXT NOT NULL DEFAULT '',"
                 + "message_count INTEGER NOT NULL DEFAULT 0,"
                 + "updated_at INTEGER NOT NULL DEFAULT 0,"
-                + "pinned INTEGER NOT NULL DEFAULT 0)");
+                + "pinned INTEGER NOT NULL DEFAULT 0,"
+                + "archived INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE messages ("
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + "conversation_id TEXT NOT NULL,"
@@ -46,8 +48,10 @@ public class ChatStore extends SQLiteOpenHelper {
                 + "created_at INTEGER NOT NULL DEFAULT 0,"
                 + "prompt_tokens INTEGER NOT NULL DEFAULT 0,"
                 + "completion_tokens INTEGER NOT NULL DEFAULT 0,"
-                + "reasoning TEXT)");
+                + "reasoning TEXT,"
+                + "error_detail TEXT)");
         db.execSQL("CREATE INDEX idx_messages_conversation ON messages(conversation_id, id)");
+        db.execSQL("CREATE INDEX idx_messages_created ON messages(created_at)");
 
         migrateFromPrefs(db);
     }
@@ -66,6 +70,12 @@ public class ChatStore extends SQLiteOpenHelper {
                     + "SELECT updated_at FROM conversations "
                     + "WHERE conversations.id = messages.conversation_id) "
                     + "WHERE created_at = 0");
+        }
+        if (oldVersion < 3) {
+            // v2.4：会话归档、失败消息的原始错误详情
+            db.execSQL("ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE messages ADD COLUMN error_detail TEXT");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)");
         }
     }
 
@@ -94,7 +104,7 @@ public class ChatStore extends SQLiteOpenHelper {
         List<Conversation> list = new ArrayList<Conversation>();
         Cursor cursor = getReadableDatabase().query("conversations",
                 new String[]{"id", "title", "display_title", "message_count", "updated_at",
-                        "pinned"},
+                        "pinned", "archived"},
                 null, null, null, null, "pinned DESC, updated_at DESC");
         try {
             while (cursor.moveToNext()) {
@@ -102,6 +112,7 @@ public class ChatStore extends SQLiteOpenHelper {
                         cursor.getString(1), cursor.getLong(4));
                 conversation.setStoredSummary(cursor.getString(2), cursor.getInt(3));
                 conversation.setPinned(cursor.getInt(5) != 0);
+                conversation.setArchived(cursor.getInt(6) != 0);
                 list.add(conversation);
             }
         } finally {
@@ -135,6 +146,74 @@ public class ChatStore extends SQLiteOpenHelper {
         return ids;
     }
 
+    /** 单条消息的搜索命中结果。 */
+    public static final class MessageHit {
+        public final long messageId;
+        public final String conversationId;
+        public final int role;
+        public final String title;
+        public final String snippet;
+        public final long timestamp;
+
+        MessageHit(long messageId, String conversationId, int role, String title,
+                   String snippet, long timestamp) {
+            this.messageId = messageId;
+            this.conversationId = conversationId;
+            this.role = role;
+            this.title = title == null ? "" : title;
+            this.snippet = snippet == null ? "" : snippet;
+            this.timestamp = timestamp;
+        }
+    }
+
+    /** 全局消息搜索：返回命中的消息，附带会话标题与上下文片段。 */
+    public List<MessageHit> searchMessages(String keyword, int limit) {
+        List<MessageHit> hits = new ArrayList<MessageHit>();
+        String query = keyword == null ? "" : keyword.trim();
+        if (query.length() == 0) {
+            return hits;
+        }
+        String pattern = "%" + query + "%";
+        Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,"
+                        + " COALESCE(NULLIF(c.display_title, ''), NULLIF(c.title, ''), '新对话')"
+                        + " FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id"
+                        + " WHERE m.role != ? AND m.content LIKE ?"
+                        + " ORDER BY m.id DESC LIMIT ?",
+                new String[]{String.valueOf(ChatMessage.ROLE_ERROR), pattern,
+                        String.valueOf(limit <= 0 ? 50 : limit)});
+        try {
+            while (cursor.moveToNext()) {
+                hits.add(new MessageHit(cursor.getLong(0), cursor.getString(1),
+                        cursor.getInt(2), cursor.getString(5),
+                        buildSnippet(cursor.getString(3), query), cursor.getLong(4)));
+            }
+        } finally {
+            cursor.close();
+        }
+        return hits;
+    }
+
+    /** 截取关键词附近的片段，便于在搜索结果里快速判断上下文。 */
+    private static String buildSnippet(String content, String keyword) {
+        if (content == null) {
+            return "";
+        }
+        String flat = content.replace('\n', ' ').replace('\r', ' ').trim();
+        String lower = flat.toLowerCase(Locale.CHINA);
+        int index = lower.indexOf(keyword.toLowerCase(Locale.CHINA));
+        int start = index < 0 ? 0 : Math.max(0, index - 16);
+        int end = Math.min(flat.length(), start + 68);
+        String snippet = flat.substring(start, end);
+        if (start > 0) {
+            snippet = "…" + snippet;
+        }
+        if (end < flat.length()) {
+            snippet = snippet + "…";
+        }
+        return snippet;
+    }
+
     /** 读取某个会话的全部消息，按写入顺序返回。 */
     public List<ChatMessage> loadMessages(String conversationId) {
         List<ChatMessage> list = new ArrayList<ChatMessage>();
@@ -143,7 +222,7 @@ public class ChatStore extends SQLiteOpenHelper {
         }
         Cursor cursor = getReadableDatabase().query("messages",
                 new String[]{"id", "role", "content", "attachment", "created_at",
-                        "prompt_tokens", "completion_tokens", "reasoning"},
+                        "prompt_tokens", "completion_tokens", "reasoning", "error_detail"},
                 "conversation_id=?", new String[]{conversationId}, null, null, "id ASC");
         try {
             while (cursor.moveToNext()) {
@@ -160,6 +239,7 @@ public class ChatStore extends SQLiteOpenHelper {
                 message.setPromptTokens(cursor.getInt(5));
                 message.setCompletionTokens(cursor.getInt(6));
                 message.setReasoning(cursor.getString(7));
+                message.setErrorDetail(cursor.getString(8));
                 list.add(message);
             }
         } finally {
@@ -190,9 +270,6 @@ public class ChatStore extends SQLiteOpenHelper {
 
             Set<Long> alive = new HashSet<Long>();
             for (ChatMessage message : conversation.getMessages()) {
-                if (message.getRole() == ChatMessage.ROLE_ERROR) {
-                    continue;
-                }
                 ContentValues values = messageValues(conversation.getId(), message);
                 long id = message.getDbId();
                 if (id > 0) {
@@ -240,6 +317,7 @@ public class ChatStore extends SQLiteOpenHelper {
         values.put("message_count", conversation.getMessageCount());
         values.put("updated_at", conversation.getUpdatedAt());
         values.put("pinned", conversation.isPinned() ? 1 : 0);
+        values.put("archived", conversation.isArchived() ? 1 : 0);
         getWritableDatabase().update("conversations", values,
                 "id=?", new String[]{conversation.getId()});
     }
@@ -278,6 +356,73 @@ public class ChatStore extends SQLiteOpenHelper {
         }
     }
 
+    /** token 用量累计值。 */
+    public static final class UsageTotals {
+        public long promptTokens;
+        public long completionTokens;
+
+        public long total() {
+            return promptTokens + completionTokens;
+        }
+    }
+
+    /** 按会话聚合的 token 用量。 */
+    public static final class UsageRow {
+        public final String title;
+        public final long promptTokens;
+        public final long completionTokens;
+
+        UsageRow(String title, long promptTokens, long completionTokens) {
+            this.title = title == null ? "新对话" : title;
+            this.promptTokens = promptTokens;
+            this.completionTokens = completionTokens;
+        }
+
+        public long total() {
+            return promptTokens + completionTokens;
+        }
+    }
+
+    /** 统计某个时间点之后的 token 用量；传入 0 表示全部历史。 */
+    public UsageTotals loadUsageTotals(long sinceMillis) {
+        UsageTotals totals = new UsageTotals();
+        Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT SUM(prompt_tokens), SUM(completion_tokens) FROM messages"
+                        + " WHERE created_at >= ?",
+                new String[]{String.valueOf(sinceMillis <= 0 ? 0 : sinceMillis)});
+        try {
+            if (cursor.moveToFirst()) {
+                totals.promptTokens = cursor.getLong(0);
+                totals.completionTokens = cursor.getLong(1);
+            }
+        } finally {
+            cursor.close();
+        }
+        return totals;
+    }
+
+    /** 按会话汇总 token 用量，用于「用量历史」里的排行。 */
+    public List<UsageRow> loadUsageByConversation(int limit) {
+        List<UsageRow> rows = new ArrayList<UsageRow>();
+        Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT COALESCE(NULLIF(c.display_title, ''), NULLIF(c.title, ''), '新对话'),"
+                        + " SUM(m.prompt_tokens), SUM(m.completion_tokens)"
+                        + " FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id"
+                        + " WHERE m.prompt_tokens > 0 OR m.completion_tokens > 0"
+                        + " GROUP BY m.conversation_id"
+                        + " ORDER BY SUM(m.prompt_tokens) + SUM(m.completion_tokens) DESC"
+                        + " LIMIT ?",
+                new String[]{String.valueOf(limit <= 0 ? 10 : limit)});
+        try {
+            while (cursor.moveToNext()) {
+                rows.add(new UsageRow(cursor.getString(0), cursor.getLong(1), cursor.getLong(2)));
+            }
+        } finally {
+            cursor.close();
+        }
+        return rows;
+    }
+
     private static void writeConversationRow(SQLiteDatabase db, Conversation conversation) {
         ContentValues values = new ContentValues();
         values.put("id", conversation.getId());
@@ -286,6 +431,7 @@ public class ChatStore extends SQLiteOpenHelper {
         values.put("message_count", conversation.getMessageCount());
         values.put("updated_at", conversation.getUpdatedAt());
         values.put("pinned", conversation.isPinned() ? 1 : 0);
+        values.put("archived", conversation.isArchived() ? 1 : 0);
         db.insertWithOnConflict("conversations", null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
@@ -299,6 +445,7 @@ public class ChatStore extends SQLiteOpenHelper {
         values.put("prompt_tokens", message.getPromptTokens());
         values.put("completion_tokens", message.getCompletionTokens());
         values.put("reasoning", message.getReasoning());
+        values.put("error_detail", message.getErrorDetail());
         return values;
     }
 

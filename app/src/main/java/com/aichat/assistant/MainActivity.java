@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -26,17 +27,18 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageActionListener {
 
     private static final int REQUEST_PICK_FILE = 1001;
+    private static final int REQUEST_PICK_IMAGE = 1002;
 
     private ListView messageList;
     private ChatAdapter adapter;
@@ -62,7 +64,16 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private LinearLayout drawerSettingsButton;
     private EditText drawerSearch;
     private TextView usageSummary;
+    private TextView archiveToggle;
+    private TextView batchButton;
+    private ListView searchResultsList;
     private ConversationAdapter conversationAdapter;
+    private SearchResultAdapter searchResultAdapter;
+
+    /** 抽屉里展示归档会话而不是普通会话。 */
+    private boolean archiveMode;
+    /** 当前搜索结果。 */
+    private final List<ChatStore.MessageHit> searchHits = new ArrayList<ChatStore.MessageHit>();
 
     /** 全部会话；conversations 用于切换与保存。 */
     private final List<Conversation> conversations = new ArrayList<Conversation>();
@@ -149,6 +160,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         drawerSettingsButton = (LinearLayout) findViewById(R.id.drawer_settings_button);
         drawerSearch = (EditText) findViewById(R.id.drawer_search);
         usageSummary = (TextView) findViewById(R.id.usage_summary);
+        archiveToggle = (TextView) findViewById(R.id.archive_toggle);
+        batchButton = (TextView) findViewById(R.id.batch_button);
+        searchResultsList = (ListView) findViewById(R.id.search_results);
 
         store = new ChatStore(this);
         loadConversations();
@@ -178,6 +192,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         conversationAdapter = new ConversationAdapter(this, visibleConversations);
         conversationAdapter.setCurrentId(current.getId());
         conversationList.setAdapter(conversationAdapter);
+        searchResultAdapter = new SearchResultAdapter(this, searchHits);
+        searchResultsList.setAdapter(searchResultAdapter);
         refreshConversationList();
 
         // 输入框恢复上次未发送的草稿
@@ -220,7 +236,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         attachButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                pickFile();
+                pickAttachment();
             }
         });
         thinkingButton.setOnClickListener(new View.OnClickListener() {
@@ -272,6 +288,24 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
                 conversationMenu(position);
                 return true;
+            }
+        });
+        searchResultsList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                openSearchHit(position);
+            }
+        });
+        archiveToggle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleArchiveMode();
+            }
+        });
+        batchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showBatchDialog();
             }
         });
         attachmentRemove.setOnClickListener(new View.OnClickListener() {
@@ -349,7 +383,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_PICK_FILE || resultCode != RESULT_OK || data == null) {
+        if ((requestCode != REQUEST_PICK_FILE && requestCode != REQUEST_PICK_IMAGE)
+                || resultCode != RESULT_OK || data == null) {
             return;
         }
         Uri uri = data.getData();
@@ -358,7 +393,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
         String name = FileUtils.getDisplayName(this, uri);
         String mime = FileUtils.getMimeType(this, uri);
-        boolean image = FileUtils.isImage(name, mime);
+        boolean image = requestCode == REQUEST_PICK_IMAGE || FileUtils.isImage(name, mime);
+        if (image && ("文件".equals(name) || name.trim().length() == 0)) {
+            name = "相册图片.jpg";
+        }
         boolean text = FileUtils.isTextFile(name, mime);
         if (!image && !text) {
             toast("暂不支持该文件类型，请选择图片或文本 / 代码文件");
@@ -523,21 +561,26 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                             }, handle);
 
                     if (handle.isCancelled()) {
-                        finishStream(null, reply, null, true);
+                        finishStream(null, reply, null, true, null);
                     } else if (reply.length() == 0) {
-                        finishStream("模型没有返回文字内容，请稍后重试", reply, streamFinishReason, false);
+                        finishStream("模型没有返回文字内容，请稍后重试", reply, streamFinishReason,
+                                false, null);
                     } else {
-                        finishStream(null, reply, streamFinishReason, false);
+                        finishStream(null, reply, streamFinishReason, false, null);
                     }
                 } catch (Exception e) {
                     if (handle.isCancelled()) {
-                        finishStream(null, null, null, true);
+                        finishStream(null, null, null, true, null);
                     } else {
                         String error = e.getMessage();
                         if (error == null || error.trim().length() == 0) {
                             error = "发生未知错误，请稍后重试";
                         }
-                        finishStream(error, snapshotStream(), null, false);
+                        String diagnostic = e instanceof ApiException
+                                ? ((ApiException) e).getDiagnostics()
+                                : e.getClass().getSimpleName()
+                                + (e.getMessage() == null ? "" : ": " + e.getMessage());
+                        finishStream(error, snapshotStream(), null, false, diagnostic);
                     }
                 }
             }
@@ -559,11 +602,17 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     public void onMessageLongClick(final ChatMessage message) {
         final List<String> actions = new ArrayList<String>();
         actions.add("复制内容");
+        actions.add("引用到输入框");
         if (message.getRole() == ChatMessage.ROLE_USER) {
+            actions.add("重发本条");
             actions.add("编辑并重发");
-        }
-        if (message.getRole() == ChatMessage.ROLE_ASSISTANT) {
+        } else if (message.getRole() == ChatMessage.ROLE_ASSISTANT) {
             actions.add("重新生成");
+        } else if (message.getRole() == ChatMessage.ROLE_ERROR) {
+            actions.add("重试");
+            if (message.hasErrorDetail()) {
+                actions.add("查看错误详情");
+            }
         }
         actions.add("删除这条");
         actions.add("导出 / 分享对话");
@@ -576,10 +625,18 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         String action = actions.get(which);
                         if ("复制内容".equals(action)) {
                             copyMessage(message);
+                        } else if ("引用到输入框".equals(action)) {
+                            quoteMessage(message);
+                        } else if ("重发本条".equals(action)) {
+                            resendMessage(message);
                         } else if ("编辑并重发".equals(action)) {
                             editAndResend(message);
                         } else if ("重新生成".equals(action)) {
                             confirmRegenerate(message);
+                        } else if ("重试".equals(action)) {
+                            retryMessage(message);
+                        } else if ("查看错误详情".equals(action)) {
+                            showErrorDetail(message);
                         } else if ("删除这条".equals(action)) {
                             deleteMessage(message);
                         } else {
@@ -587,6 +644,122 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         }
                     }
                 })
+                .show();
+    }
+
+    /** 把消息内容以引用块形式插入输入框。 */
+    private void quoteMessage(ChatMessage message) {
+        String text = message.getText().trim();
+        if (text.length() == 0) {
+            toast("这条消息没有可引用的内容");
+            return;
+        }
+        if (text.length() > 600) {
+            text = text.substring(0, 600) + "…";
+        }
+        StringBuilder quote = new StringBuilder();
+        for (String line : text.split("\n")) {
+            quote.append("> ").append(line).append('\n');
+        }
+        String existing = input.getText().toString();
+        String prefix = existing.trim().length() == 0 ? "" : existing + "\n\n";
+        input.setText(prefix + quote + "\n");
+        input.setSelection(input.getText().length());
+        input.requestFocus();
+        InputMethodManager manager =
+                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (manager != null) {
+            manager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        }
+    }
+
+    /** 直接重发某条用户消息：删除它之后的回复并重新提问。 */
+    private void resendMessage(ChatMessage message) {
+        if (sending) {
+            toast("正在生成回复，请先停止");
+            return;
+        }
+        int index = messages.indexOf(message);
+        if (index < 0 || message.getRole() != ChatMessage.ROLE_USER) {
+            return;
+        }
+        while (messages.size() > index + 1) {
+            messages.remove(messages.size() - 1);
+        }
+        adapter.notifyDataSetChanged();
+        persistConversations();
+
+        List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages.subList(0, index)),
+                Prefs.getContextMessages(this));
+        String text = message.getSendText();
+        startStreaming(prior, text, null, null, false, null);
+    }
+
+    /** 失败消息重试：保留原始提问，重新发起请求。 */
+    @Override
+    public void onRetryMessage(ChatMessage message) {
+        retryMessage(message);
+    }
+
+    private void retryMessage(ChatMessage message) {
+        if (sending) {
+            toast("正在生成回复，请先停止");
+            return;
+        }
+        int index = messages.indexOf(message);
+        if (index < 0) {
+            return;
+        }
+        int userIndex = -1;
+        for (int i = index - 1; i >= 0; i--) {
+            if (messages.get(i).getRole() == ChatMessage.ROLE_USER) {
+                userIndex = i;
+                break;
+            }
+        }
+        if (userIndex < 0) {
+            toast("没有找到对应的提问，无法重试");
+            return;
+        }
+        ChatMessage question = messages.get(userIndex);
+        String userText = question.getSendText();
+        if (userText == null || userText.trim().length() == 0) {
+            userText = question.getText();
+        }
+        while (messages.size() > userIndex + 1) {
+            messages.remove(messages.size() - 1);
+        }
+        adapter.notifyDataSetChanged();
+        persistConversations();
+
+        List<ChatMessage> prior = ContextWindow.trim(
+                new ArrayList<ChatMessage>(messages.subList(0, userIndex)),
+                Prefs.getContextMessages(this));
+        startStreaming(prior, userText, null, null, false, null);
+    }
+
+    private void showErrorDetail(ChatMessage message) {
+        String detail = message.getErrorDetail();
+        if (detail.trim().length() == 0) {
+            toast("没有更多错误信息");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("错误详情")
+                .setMessage(detail)
+                .setPositiveButton("复制", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        ClipboardManager manager =
+                                (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        if (manager != null) {
+                            manager.setPrimaryClip(ClipData.newPlainText("错误详情", detail));
+                            toast("已复制错误详情");
+                        }
+                    }
+                })
+                .setNegativeButton("关闭", null)
                 .show();
     }
 
@@ -767,7 +940,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     }
 
     private void finishStream(final String error, final String reply, final String finishReason,
-                              final boolean cancelled) {
+                              final boolean cancelled, final String diagnostic) {
         handler.post(new Runnable() {
             @Override
             public void run() {
@@ -801,7 +974,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         if (target != null) {
                             messages.remove(target);
                         }
-                        messages.add(new ChatMessage(ChatMessage.ROLE_ERROR, error));
+                        ChatMessage errorMessage =
+                                new ChatMessage(ChatMessage.ROLE_ERROR, error);
+                        errorMessage.setErrorDetail(diagnostic);
+                        messages.add(errorMessage);
                         adapter.notifyDataSetChanged();
                         scrollToBottom();
                         persistConversations();
@@ -933,6 +1109,44 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
     }
 
+    /** 附件入口：相册直发图片或选择文件。 */
+    private void pickAttachment() {
+        new AlertDialog.Builder(this)
+                .setTitle("添加附件")
+                .setItems(new String[]{"从相册选择图片", "选择文件（图片 / 文本）"},
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                if (which == 0) {
+                                    pickImage();
+                                } else {
+                                    pickFile();
+                                }
+                            }
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void pickImage() {
+        Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        intent.setType("image/*");
+        try {
+            startActivityForResult(intent, REQUEST_PICK_IMAGE);
+        } catch (Exception e) {
+            // 部分设备没有系统相册，退回通用文件选择器
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.setType("image/*");
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
+            try {
+                startActivityForResult(Intent.createChooser(fallback, "选择图片"),
+                        REQUEST_PICK_IMAGE);
+            } catch (Exception ignored) {
+                toast("没有找到可用的相册或文件选择器");
+            }
+        }
+    }
+
     private void pickFile() {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("*/*");
@@ -1023,6 +1237,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         clearAttachment();
         input.setText("");
         drawerSearch.setText("");
+        archiveMode = false;
         refreshConversationList();
         refreshUsageSummary();
         closeDrawer();
@@ -1035,6 +1250,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         Conversation target = visibleConversations.get(position);
         if (target == current) {
             closeDrawer();
+            return;
+        }
+        openConversation(target, 0);
+    }
+
+    /** 切换到指定会话，可选定位并高亮某条消息。 */
+    private void openConversation(Conversation target, long highlightMessageId) {
+        if (target == null) {
             return;
         }
         if (sending) {
@@ -1060,8 +1283,65 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         }
         refreshConversationList();
         refreshUsageSummary();
-        scrollToBottom();
         closeDrawer();
+        if (highlightMessageId > 0) {
+            scrollToMessage(highlightMessageId);
+        } else {
+            scrollToBottom();
+        }
+    }
+
+    /** 搜索命中：切到目标会话并定位、临时高亮那条消息。 */
+    private void openSearchHit(int position) {
+        if (position < 0 || position >= searchHits.size()) {
+            return;
+        }
+        ChatStore.MessageHit hit = searchHits.get(position);
+        Conversation target = null;
+        for (Conversation conversation : conversations) {
+            if (conversation.getId().equals(hit.conversationId)) {
+                target = conversation;
+                break;
+            }
+        }
+        if (target == null) {
+            toast("该会话已被删除");
+            return;
+        }
+        archiveMode = target.isArchived();
+        drawerSearch.setText("");
+        openConversation(target, hit.messageId);
+    }
+
+    /** 滚动到指定消息并短暂高亮。 */
+    private void scrollToMessage(long messageId) {
+        int index = -1;
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i).getDbId() == messageId) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) {
+            scrollToBottom();
+            return;
+        }
+        final int target = index;
+        adapter.setHighlightDbId(messageId);
+        adapter.notifyDataSetChanged();
+        messageList.post(new Runnable() {
+            @Override
+            public void run() {
+                messageList.setSelection(target);
+            }
+        });
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                adapter.setHighlightDbId(0);
+                adapter.notifyDataSetChanged();
+            }
+        }, 2600);
     }
 
     private void conversationMenu(final int position) {
@@ -1071,6 +1351,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         final Conversation conversation = visibleConversations.get(position);
         final List<String> items = new ArrayList<String>();
         items.add(conversation.isPinned() ? "取消置顶" : "置顶会话");
+        items.add(conversation.isArchived() ? "移出归档" : "归档会话");
         items.add("重命名");
         items.add("清空消息");
         items.add("删除");
@@ -1083,8 +1364,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         if (which == 0) {
                             togglePin(conversation);
                         } else if (which == 1) {
-                            renameConversation(conversation);
+                            toggleArchive(conversation);
                         } else if (which == 2) {
+                            renameConversation(conversation);
+                        } else if (which == 3) {
                             confirmClearConversation(conversation);
                         } else {
                             deleteConversation(conversation);
@@ -1092,6 +1375,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                     }
                 })
                 .show();
+    }
+
+    /** 归档 / 移出归档。 */
+    private void toggleArchive(Conversation conversation) {
+        conversation.setArchived(!conversation.isArchived());
+        store.updateConversationMeta(conversation);
+        refreshConversationList();
+        toast(conversation.isArchived() ? "已归档" : "已移出归档");
     }
 
     /** 置顶 / 取消置顶，并重新排序抽屉列表。 */
@@ -1147,25 +1438,194 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         Prefs.setDraft(this, current.getId(), input.getText().toString());
     }
 
-    /** 按搜索关键词重建抽屉列表。 */
+    /** 按搜索关键词或归档状态重建抽屉列表。 */
     private void refreshConversationList() {
         if (conversationAdapter == null) {
             return;
         }
         String keyword = drawerSearch == null ? "" : drawerSearch.getText().toString().trim();
+        boolean searching = keyword.length() > 0;
+        if (searchResultsList != null) {
+            searchResultsList.setVisibility(searching ? View.VISIBLE : View.GONE);
+        }
+        if (conversationList != null) {
+            conversationList.setVisibility(searching ? View.GONE : View.VISIBLE);
+        }
+        if (archiveToggle != null) {
+            archiveToggle.setVisibility(searching ? View.GONE : View.VISIBLE);
+        }
+        if (searching) {
+            searchHits.clear();
+            searchHits.addAll(store.searchMessages(keyword, 50));
+            if (searchResultAdapter != null) {
+                searchResultAdapter.notifyDataSetChanged();
+            }
+            return;
+        }
+        updateArchiveToggle();
         visibleConversations.clear();
-        if (keyword.length() == 0) {
-            visibleConversations.addAll(conversations);
-        } else {
-            Set<String> ids = store.searchConversationIds(keyword);
-            for (Conversation conversation : conversations) {
-                if (ids.contains(conversation.getId())) {
-                    visibleConversations.add(conversation);
-                }
+        for (Conversation conversation : conversations) {
+            if (conversation.isArchived() == archiveMode) {
+                visibleConversations.add(conversation);
             }
         }
         conversationAdapter.setCurrentId(current == null ? "" : current.getId());
         conversationAdapter.notifyDataSetChanged();
+    }
+
+    /** 在「全部会话」与「已归档」之间切换。 */
+    private void toggleArchiveMode() {
+        archiveMode = !archiveMode;
+        drawerSearch.setText("");
+        refreshConversationList();
+    }
+
+    private int countArchived() {
+        int count = 0;
+        for (Conversation conversation : conversations) {
+            if (conversation.isArchived()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void updateArchiveToggle() {
+        if (archiveToggle == null) {
+            return;
+        }
+        if (archiveMode) {
+            archiveToggle.setText("← 返回全部会话");
+        } else {
+            archiveToggle.setText("已归档 " + countArchived() + " 个 · 点击查看");
+        }
+    }
+
+    /** 批量归档 / 删除当前列表里的会话。 */
+    private void showBatchDialog() {
+        final List<Conversation> pool = new ArrayList<Conversation>();
+        for (Conversation conversation : conversations) {
+            if (conversation.isArchived() == archiveMode) {
+                pool.add(conversation);
+            }
+        }
+        if (pool.isEmpty()) {
+            toast(archiveMode ? "归档里还没有会话" : "当前没有可整理的会话");
+            return;
+        }
+        final String[] labels = new String[pool.size()];
+        for (int i = 0; i < pool.size(); i++) {
+            labels[i] = pool.get(i).getDisplayTitle();
+        }
+        final boolean[] checked = new boolean[pool.size()];
+        new AlertDialog.Builder(this)
+                .setTitle(archiveMode ? "批量管理（归档）" : "批量管理会话")
+                .setMultiChoiceItems(labels, checked,
+                        new DialogInterface.OnMultiChoiceClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which,
+                                                boolean isChecked) {
+                                checked[which] = isChecked;
+                            }
+                        })
+                .setPositiveButton("删除所选", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        confirmBatchDelete(pool, checked);
+                    }
+                })
+                .setNeutralButton(archiveMode ? "移出归档" : "归档所选",
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                applyBatchArchive(pool, checked);
+                            }
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void applyBatchArchive(List<Conversation> pool, boolean[] checked) {
+        int count = 0;
+        for (int i = 0; i < pool.size(); i++) {
+            if (!checked[i]) {
+                continue;
+            }
+            Conversation conversation = pool.get(i);
+            conversation.setArchived(!archiveMode);
+            store.updateConversationMeta(conversation);
+            count++;
+        }
+        if (count == 0) {
+            toast("请先选择会话");
+            return;
+        }
+        refreshConversationList();
+        toast((archiveMode ? "已移出归档 " : "已归档 ") + count + " 个会话");
+    }
+
+    private void confirmBatchDelete(final List<Conversation> pool, final boolean[] checked) {
+        int count = 0;
+        for (boolean value : checked) {
+            if (value) {
+                count++;
+            }
+        }
+        if (count == 0) {
+            toast("请先选择会话");
+            return;
+        }
+        final int total = count;
+        new AlertDialog.Builder(this)
+                .setTitle("批量删除")
+                .setMessage("确定删除选中的 " + total + " 个会话吗？删除后无法恢复。")
+                .setPositiveButton("删除", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        deleteConversations(pool, checked);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void deleteConversations(List<Conversation> pool, boolean[] checked) {
+        boolean currentDeleted = false;
+        for (int i = 0; i < pool.size(); i++) {
+            if (!checked[i]) {
+                continue;
+            }
+            Conversation conversation = pool.get(i);
+            conversations.remove(conversation);
+            store.deleteConversation(conversation.getId());
+            if (conversation == current) {
+                currentDeleted = true;
+            }
+        }
+        if (conversations.isEmpty()) {
+            Conversation created = Conversation.create();
+            store.saveConversation(created);
+            conversations.add(created);
+            currentDeleted = true;
+        }
+        if (currentDeleted) {
+            current = conversations.get(0);
+            if (!current.isMessagesLoaded()) {
+                current.setMessages(store.loadMessages(current.getId()));
+            }
+            messages.clear();
+            messages.addAll(current.getMessages());
+            adapter.notifyDataSetChanged();
+            Prefs.setCurrentConversationId(this, current.getId());
+            input.setText(Prefs.getDraft(this, current.getId()));
+        } else {
+            saveCurrentConversation();
+            store.saveConversation(current);
+        }
+        sortConversations();
+        refreshConversationList();
+        refreshUsageSummary();
+        toast("已删除所选会话");
     }
 
     /** 置顶优先，其次按最近更新时间排序。 */
@@ -1276,24 +1736,36 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     }
 
     private void showUsageDialog() {
-        int prompt = 0;
-        int completion = 0;
-        for (ChatMessage message : messages) {
-            prompt += message.getPromptTokens();
-            completion += message.getCompletionTokens();
-        }
+        long dayStart = startOfToday();
+        long monthStart = startOfMonth();
+        ChatStore.UsageTotals today = store.loadUsageTotals(dayStart);
+        ChatStore.UsageTotals month = store.loadUsageTotals(monthStart);
+        ChatStore.UsageTotals all = store.loadUsageTotals(0);
+        List<ChatStore.UsageRow> rows = store.loadUsageByConversation(8);
+
         double inputPrice = Prefs.getInputPrice(this);
         double outputPrice = Prefs.getOutputPrice(this);
-        double cost = prompt / 1000000d * inputPrice + completion / 1000000d * outputPrice;
+
         StringBuilder builder = new StringBuilder();
-        builder.append("本会话累计：").append(formatTokens(prompt + completion)).append(" tokens\n");
-        builder.append("· 输入：").append(formatTokens(prompt)).append(" tokens（¥")
-                .append(trimPrice(inputPrice)).append(" / 百万）\n");
-        builder.append("· 输出：").append(formatTokens(completion)).append(" tokens（¥")
-                .append(trimPrice(outputPrice)).append(" / 百万）\n");
-        builder.append("· 估算费用：约 ¥").append(formatCost(cost)).append("\n\n");
-        builder.append("说明：\n");
-        builder.append("1. 用量来自接口返回的 usage 字段，仅统计本会话当前加载的消息。\n");
+        appendUsageBlock(builder, "今日", today, inputPrice, outputPrice);
+        appendUsageBlock(builder, "本月", month, inputPrice, outputPrice);
+        appendUsageBlock(builder, "累计", all, inputPrice, outputPrice);
+
+        builder.append("\n按会话排行（累计）：\n");
+        if (rows.isEmpty()) {
+            builder.append("暂无用量记录\n");
+        } else {
+            for (int i = 0; i < rows.size(); i++) {
+                ChatStore.UsageRow row = rows.get(i);
+                builder.append(i + 1).append(". ").append(row.title).append(" — ")
+                        .append(formatTokens(row.total())).append(" tokens · ¥")
+                        .append(formatCost(costOf(row.promptTokens, row.completionTokens,
+                                inputPrice, outputPrice)))
+                        .append('\n');
+            }
+        }
+        builder.append("\n说明：\n");
+        builder.append("1. 用量来自接口返回的 usage 字段，按消息时间归入今日 / 本月。\n");
         builder.append("2. 每条回复的输入 token 都包含其上下文，因此多轮对话的输入量会重复累计。\n");
         builder.append("3. 单价可在「设置 - 接口设置 - 费用估算」中修改，实际扣费以服务商账单为准。");
         new AlertDialog.Builder(this)
@@ -1303,7 +1775,47 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 .show();
     }
 
-    private static String formatTokens(int value) {
+    private static void appendUsageBlock(StringBuilder builder, String label,
+                                         ChatStore.UsageTotals totals,
+                                         double inputPrice, double outputPrice) {
+        if (totals.total() <= 0) {
+            builder.append(label).append("：暂无用量\n");
+            return;
+        }
+        builder.append(label).append("：").append(formatTokens(totals.total()))
+                .append(" tokens · 约 ¥")
+                .append(formatCost(costOf(totals.promptTokens, totals.completionTokens,
+                        inputPrice, outputPrice)))
+                .append('\n');
+        builder.append("　输入 ").append(formatTokens(totals.promptTokens))
+                .append(" · 输出 ").append(formatTokens(totals.completionTokens)).append('\n');
+    }
+
+    private static double costOf(long prompt, long completion,
+                                 double inputPrice, double outputPrice) {
+        return prompt / 1000000d * inputPrice + completion / 1000000d * outputPrice;
+    }
+
+    private static long startOfToday() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.HOUR_OF_DAY, 0);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar.getTimeInMillis();
+    }
+
+    private static long startOfMonth() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        calendar.set(Calendar.HOUR_OF_DAY, 0);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar.getTimeInMillis();
+    }
+
+    private static String formatTokens(long value) {
         return String.format(Locale.US, "%,d", value);
     }
 
@@ -1315,13 +1827,6 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             return "<0.0001";
         }
         return String.format(Locale.US, "%.4f", cost);
-    }
-
-    private static String trimPrice(double value) {
-        if (value == Math.floor(value)) {
-            return String.valueOf((long) value);
-        }
-        return String.valueOf(value);
     }
 
     private void saveCurrentConversation() {

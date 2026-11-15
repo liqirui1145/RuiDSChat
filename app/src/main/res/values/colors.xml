@@ -31,4 +31,5 @@
     <color name="top_bar_text">#FFFFFF</color>
     <color name="row_pressed">#E4EAF0</color>
     <color name="pin_badge">#4A76A8</color>
+    <color name="row_highlight">#FFF3C4</color>
 </resources>

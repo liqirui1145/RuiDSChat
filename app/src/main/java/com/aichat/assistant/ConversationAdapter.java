@@ -69,7 +69,7 @@ public class ConversationAdapter extends BaseAdapter {
                 ? TIME_FORMAT.format(new Date(conversation.getUpdatedAt()))
                 : "";
         int count = conversation.getMessageCount();
-        String metaText = count + " 条消息";
+        String metaText = (conversation.isArchived() ? "已归档 · " : "") + count + " 条消息";
         if (time.length() > 0 && count > 0) {
             metaText = metaText + " · " + time;
         } else if (time.length() > 0) {

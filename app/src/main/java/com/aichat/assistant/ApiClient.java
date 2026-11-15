@@ -74,13 +74,13 @@ public final class ApiClient {
             }
 
             if (code < 200 || code >= 300) {
-                throw new ApiException(httpError(code, body, imageDataUri != null));
+                throw httpErrorException(code, body, imageDataUri != null);
             }
             return parseContent(body, code, imageDataUri != null);
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
-            throw new ApiException(networkError(e), e);
+            throw new ApiException(networkError(e), e, networkDiagnostics(e));
         } finally {
             if (connection != null) {
                 connection.disconnect();
@@ -166,7 +166,7 @@ public final class ApiClient {
             int code = connection.getResponseCode();
             if (code < 200 || code >= 300) {
                 String body = readAll(connection.getErrorStream());
-                throw new ApiException(httpError(code, body, imageDataUri != null));
+                throw httpErrorException(code, body, imageDataUri != null);
             }
 
             reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
@@ -192,8 +192,11 @@ public final class ApiClient {
                     JSONObject chunk = new JSONObject(data);
                     JSONObject error = chunk.optJSONObject("error");
                     if (error != null) {
-                        throw new ApiException("模型返回错误："
-                                + error.optString("message", "未知错误"));
+                        String message = error.optString("message", "未知错误");
+                        String errorCode = error.optString("code", "");
+                        throw new ApiException("模型返回错误：" + message, 0,
+                                errorCode.length() > 0
+                                        ? "error.code=" + errorCode + "\n" + data : data);
                     }
                     JSONObject usage = chunk.optJSONObject("usage");
                     if (usage != null) {
@@ -258,7 +261,7 @@ public final class ApiClient {
             if (handle != null && handle.isCancelled()) {
                 return full.toString().trim();
             }
-            throw new ApiException(networkError(e), e);
+            throw new ApiException(networkError(e), e, networkDiagnostics(e));
         } finally {
             if (reader != null) {
                 try {
@@ -429,6 +432,19 @@ public final class ApiClient {
                     + "DeepSeek 官方接口会自动使用 deepseek-flash 理解图片，使用第三方接口时请检查视觉模型名称。";
         }
         return friendly;
+    }
+
+    private static ApiException httpErrorException(int code, String body, boolean usedImage) {
+        String raw = body == null ? "" : body.trim();
+        if (raw.length() > 1200) {
+            raw = raw.substring(0, 1200) + "…";
+        }
+        return new ApiException(httpError(code, body, usedImage), code, raw);
+    }
+
+    private static String networkDiagnostics(Exception e) {
+        String message = e.getMessage();
+        return e.getClass().getSimpleName() + (message == null ? "" : ": " + message);
     }
 
     private static String networkError(Exception e) {

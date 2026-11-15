@@ -26,6 +26,10 @@ public class ChatMessage {
     private int completionTokens;
     /** 思考过程当前是否展开（仅界面状态，不持久化）。 */
     private boolean reasoningExpanded;
+    /** 失败消息的原始诊断信息（HTTP 状态码与响应内容）。 */
+    private String errorDetail = "";
+    /** 失败消息的诊断信息当前是否展开（仅界面状态）。 */
+    private boolean errorDetailExpanded;
 
     public ChatMessage(int role, String text) {
         this.role = role;
@@ -128,6 +132,26 @@ public class ChatMessage {
 
     public void setReasoningExpanded(boolean reasoningExpanded) {
         this.reasoningExpanded = reasoningExpanded;
+    }
+
+    public String getErrorDetail() {
+        return errorDetail == null ? "" : errorDetail;
+    }
+
+    public void setErrorDetail(String errorDetail) {
+        this.errorDetail = errorDetail == null ? "" : errorDetail;
+    }
+
+    public boolean hasErrorDetail() {
+        return getErrorDetail().trim().length() > 0;
+    }
+
+    public boolean isErrorDetailExpanded() {
+        return errorDetailExpanded;
+    }
+
+    public void setErrorDetailExpanded(boolean errorDetailExpanded) {
+        this.errorDetailExpanded = errorDetailExpanded;
     }
 
     public static ChatMessage fromJson(JSONObject o) {

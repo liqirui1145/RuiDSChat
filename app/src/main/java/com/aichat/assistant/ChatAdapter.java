@@ -1,6 +1,7 @@
 package com.aichat.assistant;
 
 import android.content.Context;
+import android.graphics.Color;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.method.LinkMovementMethod;
@@ -46,9 +47,19 @@ public class ChatAdapter extends BaseAdapter {
 
         /** 点击「继续生成」时调用。 */
         void onContinueGeneration(ChatMessage message);
+
+        /** 点击失败消息里的「重试」时调用。 */
+        void onRetryMessage(ChatMessage message);
     }
 
     private OnMessageActionListener actionListener;
+
+    /** 搜索定位后临时高亮的消息行号。 */
+    private long highlightDbId;
+
+    public void setHighlightDbId(long highlightDbId) {
+        this.highlightDbId = highlightDbId;
+    }
 
     public void setMessageActionListener(OnMessageActionListener listener) {
         this.actionListener = listener;
@@ -167,9 +178,19 @@ public class ChatAdapter extends BaseAdapter {
                 renderCache.put(msg, cached);
             }
             bubbleText.setText(appendContinueButton(msg, cached.text));
+        } else if (msg.getRole() == ChatMessage.ROLE_ERROR) {
+            bubbleText.setMovementMethod(LinkMovementMethod.getInstance());
+            bubbleText.setText(buildErrorText(msg));
         } else {
             bubbleText.setMovementMethod(null);
             bubbleText.setText(content);
+        }
+
+        // 搜索命中跳转后短暂高亮整行
+        if (highlightDbId > 0 && msg.getDbId() == highlightDbId) {
+            view.setBackgroundColor(context.getResources().getColor(R.color.row_highlight));
+        } else {
+            view.setBackgroundColor(Color.TRANSPARENT);
         }
 
         final View.OnLongClickListener longClick = new View.OnLongClickListener() {
@@ -194,6 +215,45 @@ public class ChatAdapter extends BaseAdapter {
             }
         });
         return view;
+    }
+
+    /** 失败气泡：内联「重试」与「查看详情」入口。 */
+    private CharSequence buildErrorText(final ChatMessage msg) {
+        SpannableStringBuilder builder = new SpannableStringBuilder(msg.getText());
+
+        builder.append("\n\n↻ 点此重试");
+        int retryStart = builder.length() - "↻ 点此重试".length();
+        builder.setSpan(new ForegroundColorSpan(
+                        context.getResources().getColor(R.color.md_link)),
+                retryStart, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        builder.setSpan(new ClickableSpan() {
+            @Override
+            public void onClick(View widget) {
+                if (actionListener != null) {
+                    actionListener.onRetryMessage(msg);
+                }
+            }
+        }, retryStart, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        if (msg.hasErrorDetail()) {
+            builder.append("　·　");
+            int toggleStart = builder.length();
+            builder.append(msg.isErrorDetailExpanded() ? "▾ 收起错误详情" : "▸ 查看错误详情");
+            builder.setSpan(new ForegroundColorSpan(
+                            context.getResources().getColor(R.color.text_secondary)),
+                    toggleStart, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            builder.setSpan(new ClickableSpan() {
+                @Override
+                public void onClick(View widget) {
+                    msg.setErrorDetailExpanded(!msg.isErrorDetailExpanded());
+                    notifyDataSetChanged();
+                }
+            }, toggleStart, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (msg.isErrorDetailExpanded()) {
+                builder.append("\n\n").append(msg.getErrorDetail());
+            }
+        }
+        return builder;
     }
 
     /** 被长度上限截断的回复末尾追加「继续生成」入口。 */
