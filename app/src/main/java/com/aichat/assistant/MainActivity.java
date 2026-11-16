@@ -46,6 +46,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private TextView sendButton;
     private TextView attachButton;
     private TextView thinkingButton;
+    private TextView modelButton;
+    /** 对话时可选的 DeepSeek 模型。 */
+    private static final String[] MODEL_VALUES =
+            new String[]{"deepseek-chat", "deepseek-reasoner"};
+    private static final String[] MODEL_NAMES =
+            new String[]{"DeepSeek-V3 · 通用对话", "DeepSeek-R1 · 深度推理"};
+    private static final String[] MODEL_CHIP_LABELS =
+            new String[]{"V3 通用", "R1 推理"};
     /** 思考强度选项，下标与 Prefs.getReasoningLevel 对应。 */
     private static final String[] REASONING_LABELS =
             new String[]{"关闭（直接回答）", "极低", "低", "中", "高"};
@@ -145,6 +153,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         sendButton = (TextView) findViewById(R.id.send_button);
         attachButton = (TextView) findViewById(R.id.attach_button);
         thinkingButton = (TextView) findViewById(R.id.thinking_button);
+        modelButton = (TextView) findViewById(R.id.model_button);
         statusRow = (LinearLayout) findViewById(R.id.status_row);
         statusText = (TextView) findViewById(R.id.status_text);
         attachmentRow = (LinearLayout) findViewById(R.id.attachment_row);
@@ -245,7 +254,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 showReasoningDialog();
             }
         });
+        modelButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showModelDialog();
+            }
+        });
         updateThinkingLabel();
+        updateModelLabel();
         findViewById(R.id.drawer_button).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1107,6 +1123,84 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         } else {
             thinkingButton.setText("思考 " + REASONING_LABELS[level]);
         }
+    }
+
+    /** 对话时选择 DeepSeek 模型，立即作用于下一次提问。 */
+    private void showModelDialog() {
+        final String current = Prefs.getChatModel(this);
+        int checked = MODEL_VALUES.length;
+        for (int i = 0; i < MODEL_VALUES.length; i++) {
+            if (MODEL_VALUES[i].equals(current)) {
+                checked = i;
+                break;
+            }
+        }
+        final String[] items = new String[MODEL_VALUES.length + 1];
+        for (int i = 0; i < MODEL_VALUES.length; i++) {
+            items[i] = MODEL_NAMES[i] + "（" + MODEL_VALUES[i] + "）";
+        }
+        items[MODEL_VALUES.length] = checked == MODEL_VALUES.length
+                ? "自定义模型名…（" + current + "）" : "自定义模型名…";
+
+        new AlertDialog.Builder(this)
+                .setTitle("选择模型")
+                .setSingleChoiceItems(items, checked, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which < MODEL_VALUES.length) {
+                            Prefs.setChatModel(MainActivity.this, MODEL_VALUES[which]);
+                            updateModelLabel();
+                            toast("已切换到 " + MODEL_NAMES[which]);
+                            dialog.dismiss();
+                        } else {
+                            dialog.dismiss();
+                            showCustomModelDialog();
+                        }
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showCustomModelDialog() {
+        final EditText editor = new EditText(this);
+        editor.setSingleLine(true);
+        editor.setText(Prefs.getChatModel(this));
+        editor.setSelection(editor.getText().length());
+        new AlertDialog.Builder(this)
+                .setTitle("自定义模型名")
+                .setMessage("填写接口支持的模型标识，例如 deepseek-chat")
+                .setView(editor)
+                .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        String value = editor.getText().toString().trim();
+                        if (value.length() == 0) {
+                            toast("模型名不能为空");
+                            return;
+                        }
+                        Prefs.setChatModel(MainActivity.this, value);
+                        updateModelLabel();
+                        toast("已切换到 " + value);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void updateModelLabel() {
+        String model = Prefs.getChatModel(this);
+        String chip = model;
+        for (int i = 0; i < MODEL_VALUES.length; i++) {
+            if (MODEL_VALUES[i].equals(model)) {
+                chip = MODEL_CHIP_LABELS[i];
+                break;
+            }
+        }
+        if (chip.length() > 14) {
+            chip = chip.substring(0, 14) + "…";
+        }
+        modelButton.setText("模型 " + chip);
     }
 
     /** 附件入口：相册直发图片或选择文件。 */

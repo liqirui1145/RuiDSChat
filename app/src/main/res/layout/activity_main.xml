@@ -218,6 +218,19 @@
             android:paddingTop="6dp">
 
             <TextView
+                android:id="@+id/model_button"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginRight="8dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:text="模型 V3 通用"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <TextView
                 android:id="@+id/thinking_button"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
