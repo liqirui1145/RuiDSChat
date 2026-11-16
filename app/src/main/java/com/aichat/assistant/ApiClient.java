@@ -192,8 +192,11 @@ public final class ApiClient {
                     JSONObject chunk = new JSONObject(data);
                     JSONObject error = chunk.optJSONObject("error");
                     if (error != null) {
-                        String message = error.optString("message", "未知错误");
-                        String errorCode = error.optString("code", "");
+                        String message = text(error, "message");
+                        if (message.length() == 0) {
+                            message = "未知错误";
+                        }
+                        String errorCode = text(error, "code");
                         throw new ApiException("模型返回错误：" + message, 0,
                                 errorCode.length() > 0
                                         ? "error.code=" + errorCode + "\n" + data : data);
@@ -217,28 +220,28 @@ public final class ApiClient {
                     JSONObject delta = choice.optJSONObject("delta");
                     String piece = "";
                     if (delta != null) {
-                        String reasoning = delta.optString("reasoning_content",
-                                delta.optString("reasoning", ""));
-                        if (reasoning != null && reasoning.length() > 0 && callback != null) {
+                        String reasoning = text(delta, "reasoning_content");
+                        if (reasoning.length() == 0) {
+                            reasoning = text(delta, "reasoning");
+                        }
+                        if (reasoning.length() > 0 && callback != null) {
                             callback.onReasoning(reasoning);
                         }
-                        piece = delta.optString("content", "");
-                        if ((piece == null || piece.length() == 0)) {
+                        piece = text(delta, "content");
+                        if (piece.length() == 0) {
                             // 兼容把增量放在 message 里的实现
                             JSONObject message = delta.optJSONObject("message");
-                            if (message != null) {
-                                piece = message.optString("content", "");
-                            }
+                            piece = text(message, "content");
                         }
                     }
-                    if (piece != null && piece.length() > 0) {
+                    if (piece.length() > 0) {
                         full.append(piece);
                         if (callback != null) {
                             callback.onDelta(piece);
                         }
                     }
-                    String reason = choice.optString("finish_reason", "");
-                    if (reason != null && reason.length() > 0 && !"null".equals(reason)) {
+                    String reason = text(choice, "finish_reason");
+                    if (reason.length() > 0) {
                         finishReason = reason;
                     }
                 } catch (ApiException e) {
@@ -372,8 +375,8 @@ public final class ApiClient {
                 JSONArray array = (JSONArray) contentObject;
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject part = array.optJSONObject(i);
-                    if (part != null && part.has("text")) {
-                        result.append(part.optString("text", ""));
+                    if (part != null) {
+                        result.append(text(part, "text"));
                     }
                 }
             }
@@ -389,15 +392,29 @@ public final class ApiClient {
         }
     }
 
+    /**
+     * 读取 JSON 里的字符串字段。
+     * org.json 的 optString 会把 JSON null 转成字符串 "null"，
+     * 深度思考接口在正文阶段会持续返回 "reasoning_content": null，
+     * 直接使用会把大段 null 拼进消息里，所以这里只接受真正的字符串。
+     */
+    private static String text(JSONObject object, String key) {
+        if (object == null) {
+            return "";
+        }
+        Object value = object.opt(key);
+        return value instanceof String ? (String) value : "";
+    }
+
     private static String httpError(int code, String body, boolean usedImage) {
         String detail = "";
         try {
             JSONObject root = new JSONObject(body);
             JSONObject error = root.optJSONObject("error");
             if (error != null) {
-                detail = error.optString("message", "");
+                detail = text(error, "message");
             } else {
-                detail = root.optString("message", "");
+                detail = text(root, "message");
             }
         } catch (Exception ignored) {
         }

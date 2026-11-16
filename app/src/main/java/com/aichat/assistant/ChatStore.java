@@ -226,7 +226,8 @@ public class ChatStore extends SQLiteOpenHelper {
                 "conversation_id=?", new String[]{conversationId}, null, null, "id ASC");
         try {
             while (cursor.moveToNext()) {
-                ChatMessage message = new ChatMessage(cursor.getInt(1), cursor.getString(2));
+                ChatMessage message = new ChatMessage(cursor.getInt(1),
+                        cleanNullDump(cursor.getString(2)));
                 message.setDbId(cursor.getLong(0));
                 String attachment = cursor.getString(3);
                 if (attachment != null && attachment.length() > 0) {
@@ -238,7 +239,7 @@ public class ChatStore extends SQLiteOpenHelper {
                 }
                 message.setPromptTokens(cursor.getInt(5));
                 message.setCompletionTokens(cursor.getInt(6));
-                message.setReasoning(cursor.getString(7));
+                message.setReasoning(cleanNullDump(cursor.getString(7)));
                 message.setErrorDetail(cursor.getString(8));
                 list.add(message);
             }
@@ -421,6 +422,18 @@ public class ChatStore extends SQLiteOpenHelper {
             cursor.close();
         }
         return rows;
+    }
+
+    /** 修复旧版本把 JSON null 拼成「nullnull…」的历史消息。 */
+    private static String cleanNullDump(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > 0 && trimmed.replace("null", "").trim().length() == 0) {
+            return "";
+        }
+        return value;
     }
 
     private static void writeConversationRow(SQLiteDatabase db, Conversation conversation) {

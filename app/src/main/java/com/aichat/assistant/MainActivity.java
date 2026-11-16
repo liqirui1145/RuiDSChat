@@ -924,6 +924,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     }
 
     private void onStreamDelta(String piece) {
+        if (piece == null || piece.length() == 0) {
+            return;
+        }
         synchronized (streamBuffer) {
             streamBuffer.append(piece);
         }
@@ -940,6 +943,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     }
 
     private void onStreamReasoning(String piece) {
+        if (piece == null || piece.length() == 0) {
+            return;
+        }
         synchronized (reasoningBuffer) {
             reasoningBuffer.append(piece);
         }
