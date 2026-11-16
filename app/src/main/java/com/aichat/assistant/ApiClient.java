@@ -524,7 +524,7 @@ public final class ApiClient {
         return text;
     }
 
-    private static synchronized void ensureTls(Context context) throws ApiException {
+    static synchronized void ensureTls(Context context) throws ApiException {
         if (tlsReady) {
             return;
         }

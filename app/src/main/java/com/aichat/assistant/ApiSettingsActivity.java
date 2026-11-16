@@ -20,6 +20,9 @@ public class ApiSettingsActivity extends BaseActivity {
     private EditText visionBaseUrlInput;
     private EditText visionModelInput;
     private EditText visionKeyInput;
+    private EditText githubTokenInput;
+    private EditText githubRepoInput;
+    private EditText githubBranchInput;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,6 +39,9 @@ public class ApiSettingsActivity extends BaseActivity {
         visionBaseUrlInput = (EditText) findViewById(R.id.vision_base_url_input);
         visionModelInput = (EditText) findViewById(R.id.vision_model_input);
         visionKeyInput = (EditText) findViewById(R.id.vision_key_input);
+        githubTokenInput = (EditText) findViewById(R.id.github_token_input);
+        githubRepoInput = (EditText) findViewById(R.id.github_repo_input);
+        githubBranchInput = (EditText) findViewById(R.id.github_branch_input);
 
         apiKeyInput.setText(Prefs.getApiKey(this));
         baseUrlInput.setText(Prefs.getBaseUrl(this));
@@ -48,6 +54,9 @@ public class ApiSettingsActivity extends BaseActivity {
         visionBaseUrlInput.setText(Prefs.getVisionBaseUrl(this));
         visionModelInput.setText(Prefs.getVisionModel(this));
         visionKeyInput.setText(Prefs.getVisionKey(this));
+        githubTokenInput.setText(Prefs.getGitHubToken(this));
+        githubRepoInput.setText(Prefs.getGitHubRepo(this));
+        githubBranchInput.setText(Prefs.getGitHubBranch(this));
 
         findViewById(R.id.back_button).setOnClickListener(new View.OnClickListener() {
             @Override
@@ -59,6 +68,12 @@ public class ApiSettingsActivity extends BaseActivity {
             @Override
             public void onClick(View v) {
                 save();
+            }
+        });
+        findViewById(R.id.github_verify_button).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                verifyGitHub();
             }
         });
     }
@@ -97,6 +112,11 @@ public class ApiSettingsActivity extends BaseActivity {
         Prefs.setVisionModel(this, visionModelInput.getText().toString().trim());
         boolean encrypted = Prefs.setVisionKey(this,
                 visionKeyInput.getText().toString().trim());
+        if (!Prefs.setGitHubToken(this, githubTokenInput.getText().toString().trim())) {
+            encrypted = false;
+        }
+        Prefs.setGitHubRepo(this, githubRepoInput.getText().toString().trim());
+        Prefs.setGitHubBranch(this, githubBranchInput.getText().toString().trim());
         if (!Prefs.setApiKey(this, apiKeyInput.getText().toString().trim())) {
             encrypted = false;
         }
@@ -106,6 +126,37 @@ public class ApiSettingsActivity extends BaseActivity {
                         : "已保存，但系统 Keystore 不可用，Key 暂以明文保存",
                 Toast.LENGTH_LONG).show();
         finish();
+    }
+
+    private void verifyGitHub() {
+        final String token = githubTokenInput.getText().toString().trim();
+        if (token.length() == 0) {
+            Toast.makeText(this, "请先填写 GitHub Token", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "正在连接 GitHub…", Toast.LENGTH_SHORT).show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String result;
+                try {
+                    String login = new GitHubClient(ApiSettingsActivity.this, token).getLogin();
+                    result = "连接成功，当前账号：" + login;
+                } catch (ApiException e) {
+                    result = e.getMessage() == null ? "连接失败" : e.getMessage();
+                } catch (Exception e) {
+                    result = "连接失败：" + e;
+                }
+                final String message = result;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(ApiSettingsActivity.this, message,
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        }).start();
     }
 
     private static float parsePrice(String text, float fallback) {

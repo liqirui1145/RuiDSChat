@@ -47,6 +47,10 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private TextView attachButton;
     private TextView thinkingButton;
     private TextView modelButton;
+    private TextView githubButton;
+    /** GitHub 助手模式：开启后发送的指令交给 GitHubAgent 直接操作 GitHub。 */
+    private boolean githubMode;
+    private java.util.concurrent.atomic.AtomicBoolean agentCancelled;
     /** 对话时可选的 DeepSeek 模型。 */
     private static final String[] MODEL_VALUES =
             new String[]{"deepseek-chat", "deepseek-reasoner"};
@@ -154,6 +158,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         attachButton = (TextView) findViewById(R.id.attach_button);
         thinkingButton = (TextView) findViewById(R.id.thinking_button);
         modelButton = (TextView) findViewById(R.id.model_button);
+        githubButton = (TextView) findViewById(R.id.github_button);
         statusRow = (LinearLayout) findViewById(R.id.status_row);
         statusText = (TextView) findViewById(R.id.status_text);
         attachmentRow = (LinearLayout) findViewById(R.id.attachment_row);
@@ -260,6 +265,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 showModelDialog();
             }
         });
+        githubButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleGitHubMode();
+            }
+        });
+        githubMode = Prefs.isGitHubMode(this);
+        updateGitHubLabel();
         updateThinkingLabel();
         updateModelLabel();
         findViewById(R.id.drawer_button).setOnClickListener(new View.OnClickListener() {
@@ -431,6 +444,29 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         String typed = input.getText().toString().trim();
         if (typed.length() == 0 && pendingUri == null) {
             toast("请输入内容或添加附件");
+            return;
+        }
+        if (githubMode) {
+            if (pendingUri != null) {
+                toast("GitHub 模式下暂不支持附件，请先移除附件");
+                return;
+            }
+            if (Prefs.getGitHubToken(this).trim().length() == 0) {
+                showGitHubTokenDialog();
+                return;
+            }
+            ChatMessage message = new ChatMessage(ChatMessage.ROLE_USER, typed);
+            message.setSendText(typed);
+            messages.add(message);
+            adapter.notifyDataSetChanged();
+            scrollToBottom();
+            input.setText("");
+            Prefs.setDraft(this, current.getId(), "");
+            persistConversations();
+            final List<ChatMessage> prior = ContextWindow.trim(
+                    new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
+                    Prefs.getContextMessages(this));
+            startGitHubAgent(prior, typed);
             return;
         }
         String apiKey = Prefs.getApiKey(this);
@@ -607,11 +643,155 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         if (!sending) {
             return;
         }
+        java.util.concurrent.atomic.AtomicBoolean agent = agentCancelled;
+        if (agent != null) {
+            agent.set(true);
+            showStatus("正在停止…");
+            return;
+        }
         ApiClient.StreamHandle handle = streamHandle;
         if (handle != null) {
             handle.cancel();
         }
         showStatus("正在停止…");
+    }
+
+    /** GitHub 模式：把指令交给 GitHubAgent，由模型规划并执行 GitHub 操作。 */
+    private void startGitHubAgent(final List<ChatMessage> prior, final String instruction) {
+        sending = true;
+        setBusy(true);
+        showStatus("正在规划 GitHub 操作…");
+
+        final java.util.concurrent.atomic.AtomicBoolean cancelled =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        agentCancelled = cancelled;
+
+        ChatMessage placeholder = new ChatMessage(ChatMessage.ROLE_ASSISTANT,
+                "正在规划 GitHub 操作…");
+        streamingMessage = placeholder;
+        messages.add(placeholder);
+        adapter.notifyDataSetChanged();
+        atBottom = true;
+        scrollToBottom();
+
+        final Context appContext = getApplicationContext();
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    GitHubAgent.Result result = GitHubAgent.run(appContext, prior, instruction,
+                            new GitHubAgent.Progress() {
+                                @Override
+                                public void onStep(String message) {
+                                    updateStatus(message);
+                                }
+                            }, cancelled);
+                    finishAgent(result.reply, result.log, result.cancelled, null, null);
+                } catch (Exception e) {
+                    if (cancelled.get()) {
+                        finishAgent(null, null, true, null, null);
+                        return;
+                    }
+                    String error = e.getMessage();
+                    if (error == null || error.trim().length() == 0) {
+                        error = "GitHub 操作失败，请稍后重试";
+                    }
+                    String diagnostic = e instanceof ApiException
+                            ? ((ApiException) e).getDiagnostics()
+                            : e.getClass().getSimpleName()
+                            + (e.getMessage() == null ? "" : ": " + e.getMessage());
+                    finishAgent(null, null, false, error, diagnostic);
+                }
+            }
+        });
+    }
+
+    private void finishAgent(final String reply, final String log, final boolean cancelled,
+                             final String error, final String diagnostic) {
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (isFinishing()) {
+                    return;
+                }
+                sending = false;
+                setBusy(false);
+                hideStatus();
+                agentCancelled = null;
+
+                ChatMessage target = streamingMessage;
+                streamingMessage = null;
+
+                if (error != null) {
+                    if (target != null) {
+                        messages.remove(target);
+                    }
+                    ChatMessage errorMessage = new ChatMessage(ChatMessage.ROLE_ERROR, error);
+                    errorMessage.setErrorDetail(diagnostic);
+                    messages.add(errorMessage);
+                } else {
+                    StringBuilder builder = new StringBuilder();
+                    if (reply != null) {
+                        builder.append(reply.trim());
+                    }
+                    if (log != null && log.trim().length() > 0) {
+                        if (builder.length() > 0) {
+                            builder.append("\n\n");
+                        }
+                        builder.append("—— GitHub 操作记录 ——\n").append(log.trim());
+                    }
+                    if (builder.length() == 0) {
+                        builder.append(cancelled ? "已停止 GitHub 操作。" : "任务已完成。");
+                    } else if (cancelled) {
+                        builder.append("\n\n（已停止）");
+                    }
+                    String text = builder.toString();
+                    if (target != null) {
+                        target.setText(text);
+                    } else {
+                        messages.add(new ChatMessage(ChatMessage.ROLE_ASSISTANT, text));
+                    }
+                }
+
+                adapter.notifyDataSetChanged();
+                if (atBottom) {
+                    scrollToBottom();
+                }
+                persistConversations();
+            }
+        });
+    }
+
+    private void toggleGitHubMode() {
+        if (!githubMode && Prefs.getGitHubToken(this).trim().length() == 0) {
+            showGitHubTokenDialog();
+            return;
+        }
+        githubMode = !githubMode;
+        Prefs.setGitHubMode(this, githubMode);
+        updateGitHubLabel();
+        toast(githubMode
+                ? "GitHub 模式已开启，发送的指令将由 AI 直接操作 GitHub"
+                : "GitHub 模式已关闭");
+    }
+
+    private void updateGitHubLabel() {
+        githubButton.setText(githubMode ? "GitHub 已开" : "GitHub 关闭");
+        githubButton.setTextColor(githubMode ? 0xFF4A76A8 : 0xFF5F6670);
+    }
+
+    private void showGitHubTokenDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("尚未配置 GitHub Token")
+                .setMessage("请先在「接口设置 - GitHub 助手」填写具有 repo、workflow 权限的个人访问令牌，AI 才能代替你操作 GitHub。")
+                .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        startActivity(new Intent(MainActivity.this, ApiSettingsActivity.class));
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     @Override

@@ -126,6 +126,44 @@ public final class Prefs {
         sp(context).edit().putBoolean("dark_mode", value).apply();
     }
 
+    /** GitHub 个人访问令牌（Keystore 加密保存）。 */
+    public static String getGitHubToken(Context context) {
+        return readSecret(context, "github_token");
+    }
+
+    public static boolean setGitHubToken(Context context, String value) {
+        return writeSecret(context, "github_token", value);
+    }
+
+    /** 默认仓库，格式 owner/repo。 */
+    public static String getGitHubRepo(Context context) {
+        return trim(sp(context).getString("github_repo", ""));
+    }
+
+    public static void setGitHubRepo(Context context, String value) {
+        sp(context).edit().putString("github_repo", trim(value)).apply();
+    }
+
+    public static String getGitHubBranch(Context context) {
+        String value = trim(sp(context).getString("github_branch", ""));
+        return value.length() == 0 ? "main" : value;
+    }
+
+    public static void setGitHubBranch(Context context, String value) {
+        String branch = trim(value);
+        sp(context).edit().putString("github_branch",
+                branch.length() == 0 ? "main" : branch).apply();
+    }
+
+    /** 对话里是否开启 GitHub 助手模式。 */
+    public static boolean isGitHubMode(Context context) {
+        return sp(context).getBoolean("github_mode", false);
+    }
+
+    public static void setGitHubMode(Context context, boolean value) {
+        sp(context).edit().putBoolean("github_mode", value).apply();
+    }
+
     /** 读取旧版存放在 SharedPreferences 里的对话数据，仅供迁移到 SQLite 使用。 */
     static List<Conversation> readLegacyConversations(Context context) {
         List<Conversation> list = new ArrayList<Conversation>();
