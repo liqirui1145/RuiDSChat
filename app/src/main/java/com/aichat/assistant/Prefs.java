@@ -135,6 +135,25 @@ public final class Prefs {
         return writeSecret(context, "github_token", value);
     }
 
+    /** GitHub OAuth App 的 Client ID（可公开，不是密钥）。 */
+    public static String getGitHubClientId(Context context) {
+        String value = trim(sp(context).getString("github_client_id", ""));
+        return value.length() == 0 ? GitHubAuth.DEFAULT_CLIENT_ID : value;
+    }
+
+    public static void setGitHubClientId(Context context, String value) {
+        sp(context).edit().putString("github_client_id", trim(value)).apply();
+    }
+
+    /** 授权登录后缓存的 GitHub 登录名，仅用于展示。 */
+    public static String getGitHubLogin(Context context) {
+        return trim(sp(context).getString("github_login", ""));
+    }
+
+    public static void setGitHubLogin(Context context, String value) {
+        sp(context).edit().putString("github_login", trim(value)).apply();
+    }
+
     /** 默认仓库，格式 owner/repo。 */
     public static String getGitHubRepo(Context context) {
         return trim(sp(context).getString("github_repo", ""));

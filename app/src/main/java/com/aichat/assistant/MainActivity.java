@@ -782,9 +782,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
 
     private void showGitHubTokenDialog() {
         new AlertDialog.Builder(this)
-                .setTitle("尚未配置 GitHub Token")
-                .setMessage("请先在「接口设置 - GitHub 助手」填写具有 repo、workflow 权限的个人访问令牌，AI 才能代替你操作 GitHub。")
-                .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
+                .setTitle("尚未登录 GitHub")
+                .setMessage("请先在「接口设置 - GitHub 助手」点击「通过浏览器登录 GitHub」，完成授权后 AI 才能代替你操作 GitHub。")
+                .setPositiveButton("去登录", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         startActivity(new Intent(MainActivity.this, ApiSettingsActivity.class));
