@@ -382,6 +382,175 @@ public final class GitHubClient {
         return builder.length() == 0 ? "没有提交记录" : builder.toString().trim();
     }
 
+    public String createRelease(String owner, String repo, String tag, String title, String body,
+                                String target, boolean draft, boolean prerelease)
+            throws ApiException {
+        if (tag == null || tag.trim().length() == 0) {
+            throw new ApiException("缺少 release 的 tag 名称");
+        }
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("tag_name", tag.trim());
+            payload.put("name", title == null || title.trim().length() == 0
+                    ? tag.trim() : title.trim());
+            payload.put("body", body == null ? "" : body);
+            if (target != null && target.trim().length() > 0) {
+                payload.put("target_commitish", target.trim());
+            }
+            payload.put("draft", draft);
+            payload.put("prerelease", prerelease);
+            JSONObject response = json(request("POST",
+                    repoPath(owner, repo) + "/releases", payload.toString()));
+            return "已发布 Release " + str(response, "tag_name")
+                    + (draft ? "（草稿）" : "")
+                    + "\n" + str(response, "html_url");
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("发布 Release 失败：" + e.getMessage(), e);
+        }
+    }
+
+    public String listReleases(String owner, String repo) throws ApiException {
+        JSONArray array = array(request("GET",
+                repoPath(owner, repo) + "/releases?per_page=10", null));
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject item = array.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            builder.append(str(item, "tag_name")).append("  ")
+                    .append(str(item, "name"))
+                    .append(item.optBoolean("draft") ? "（草稿）" : "")
+                    .append(item.optBoolean("prerelease") ? "（预发布）" : "")
+                    .append("  ").append(str(item, "published_at")).append('\n');
+        }
+        return builder.length() == 0 ? "还没有 Release" : builder.toString().trim();
+    }
+
+    public String createBranch(String owner, String repo, String name, String from)
+            throws ApiException {
+        if (name == null || name.trim().length() == 0) {
+            throw new ApiException("缺少分支名称 name");
+        }
+        String base = from == null ? "" : from.trim();
+        if (base.length() == 0) {
+            base = str(json(request("GET", repoPath(owner, repo), null)), "default_branch");
+        }
+        if (base.length() == 0) {
+            base = "main";
+        }
+        try {
+            JSONObject ref = json(request("GET",
+                    repoPath(owner, repo) + "/git/ref/heads/" + encodePath(base), null));
+            JSONObject object = ref.optJSONObject("object");
+            String sha = object == null ? "" : str(object, "sha");
+            if (sha.length() == 0) {
+                throw new ApiException("找不到分支 " + base);
+            }
+            JSONObject payload = new JSONObject();
+            payload.put("ref", "refs/heads/" + name.trim());
+            payload.put("sha", sha);
+            JSONObject response = json(request("POST",
+                    repoPath(owner, repo) + "/git/refs", payload.toString()));
+            return "已创建分支 " + str(response, "ref") + "（基于 " + base + "）";
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("创建分支失败：" + e.getMessage(), e);
+        }
+    }
+
+    public String deleteFile(String owner, String repo, String path, String message,
+                             String branch, String sha) throws ApiException {
+        if (path == null || path.trim().length() == 0) {
+            throw new ApiException("缺少文件路径 path");
+        }
+        if (sha == null || sha.trim().length() == 0) {
+            throw new ApiException("删除文件必须提供 sha，请先 read_file");
+        }
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("message", message == null || message.trim().length() == 0
+                    ? "Delete " + path : message.trim());
+            payload.put("sha", sha.trim());
+            if (branch != null && branch.trim().length() > 0) {
+                payload.put("branch", branch.trim());
+            }
+            request("DELETE", repoPath(owner, repo) + "/contents/" + encodePath(path.trim()),
+                    payload.toString());
+            return "已删除 " + path;
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("删除文件失败：" + e.getMessage(), e);
+        }
+    }
+
+    public String createPullRequest(String owner, String repo, String title, String head,
+                                    String base, String body) throws ApiException {
+        if (title == null || title.trim().length() == 0) {
+            throw new ApiException("缺少 PR 标题 title");
+        }
+        if (head == null || head.trim().length() == 0) {
+            throw new ApiException("缺少源分支 head");
+        }
+        try {
+            String baseBranch = base == null ? "" : base.trim();
+            if (baseBranch.length() == 0) {
+                baseBranch = str(json(request("GET", repoPath(owner, repo), null)),
+                        "default_branch");
+            }
+            JSONObject payload = new JSONObject();
+            payload.put("title", title.trim());
+            payload.put("head", head.trim());
+            payload.put("base", baseBranch);
+            payload.put("body", body == null ? "" : body);
+            JSONObject response = json(request("POST",
+                    repoPath(owner, repo) + "/pulls", payload.toString()));
+            return "已创建 PR #" + response.optInt("number") + "："
+                    + str(response, "title") + "\n" + str(response, "html_url");
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("创建 PR 失败：" + e.getMessage(), e);
+        }
+    }
+
+    public String mergePullRequest(String owner, String repo, int number) throws ApiException {
+        if (number <= 0) {
+            throw new ApiException("缺少 PR 编号");
+        }
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("merge_method", "merge");
+            JSONObject response = json(request("PUT",
+                    repoPath(owner, repo) + "/pulls/" + number + "/merge",
+                    payload.toString()));
+            return "PR #" + number + " 合并结果：" + (response.optBoolean("merged")
+                    ? "成功" : str(response, "message"));
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("合并 PR 失败：" + e.getMessage(), e);
+        }
+    }
+
+    public String rerunWorkflowRun(String owner, String repo, long runId) throws ApiException {
+        if (runId <= 0) {
+            throw new ApiException("缺少 run_id");
+        }
+        try {
+            request("POST", repoPath(owner, repo) + "/actions/runs/" + runId + "/rerun", null);
+            return "已重新运行 #" + runId;
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ApiException("重新运行失败：" + e.getMessage(), e);
+        }
+    }
+
     private String repoPath(String owner, String repo) throws ApiException {
         if (owner == null || owner.trim().length() == 0
                 || repo == null || repo.trim().length() == 0) {

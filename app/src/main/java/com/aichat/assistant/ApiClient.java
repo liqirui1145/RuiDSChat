@@ -38,6 +38,22 @@ public final class ApiClient {
     public static String chat(Context context, String baseUrl, String apiKey, String model,
                               String systemPrompt, List<ChatMessage> history,
                               String userText, String imageDataUri) throws ApiException {
+        return chatInternal(context, baseUrl, apiKey, model, systemPrompt, history,
+                userText, imageDataUri, false);
+    }
+
+    /** JSON 模式对话：强制模型只输出 JSON 对象，用于工具调用类任务。 */
+    public static String chatJson(Context context, String baseUrl, String apiKey, String model,
+                                  String systemPrompt, List<ChatMessage> history,
+                                  String userText) throws ApiException {
+        return chatInternal(context, baseUrl, apiKey, model, systemPrompt, history,
+                userText, null, true);
+    }
+
+    private static String chatInternal(Context context, String baseUrl, String apiKey, String model,
+                                       String systemPrompt, List<ChatMessage> history,
+                                       String userText, String imageDataUri, boolean jsonMode)
+            throws ApiException {
         ensureTls(context);
 
         String endpoint = buildEndpoint(baseUrl);
@@ -45,6 +61,12 @@ public final class ApiClient {
         try {
             JSONObject root = buildPayload(model, systemPrompt, history, userText,
                     imageDataUri, false, 0, 0);
+            if (jsonMode) {
+                root.put("temperature", 0);
+                JSONObject format = new JSONObject();
+                format.put("type", "json_object");
+                root.put("response_format", format);
+            }
 
             byte[] payload = root.toString().getBytes("UTF-8");
 
