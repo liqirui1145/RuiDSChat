@@ -266,17 +266,17 @@
 
                 <TextView
                     style="@style/FieldLabel"
-                    android:text="OAuth App Client ID（首次使用需填写一次）" />
+                    android:text="OAuth App Client ID（已内置，无需修改）" />
 
                 <EditText
                     android:id="@+id/github_client_id_input"
                     style="@style/FieldInput"
-                    android:hint="留空则使用内置应用"
+                    android:hint="留空则使用内置授权应用"
                     android:inputType="text" />
 
                 <TextView
                     style="@style/FieldHint"
-                    android:text="Client ID 不是密钥，可以公开。若提示未配置，点登录按钮会引导你在 GitHub 免费创建一个 OAuth App。" />
+                    android:text="Client ID 不是密钥，可以公开。App 已内置授权应用，直接点上方登录按钮即可。" />
 
                 <TextView
                     style="@style/FieldLabel"

@@ -23,7 +23,7 @@ public final class GitHubAuth {
      * 内置 OAuth App 的 Client ID。可公开，不是密钥。
      * 留空时需要在设置页填写一次自建 OAuth App 的 Client ID。
      */
-    public static final String DEFAULT_CLIENT_ID = "";
+    public static final String DEFAULT_CLIENT_ID = "Ov23liPNLcCXk90YECPQ";
 
     /** 需要申请的权限：仓库读写 + Actions。 */
     public static final String SCOPE = "repo workflow";
