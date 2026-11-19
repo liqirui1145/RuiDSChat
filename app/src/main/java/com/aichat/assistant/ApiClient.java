@@ -594,10 +594,21 @@ public final class ApiClient {
 
         InputStream in = null;
         try {
-            in = context.getResources().openRawResource(R.raw.deepseek_root_g2);
+            // Android 6 及以下缺少 GitHub 使用的 Sectigo / USERTrust ECC 根证书，
+            // 这里连同 DeepSeek 的根证书一起内置，避免老设备握手失败。
+            int[] extraRoots = {
+                    R.raw.deepseek_root_g2,
+                    R.raw.github_usertrust_ecc,
+                    R.raw.github_sectigo_e46,
+            };
             CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-            for (Certificate certificate : certificateFactory.generateCertificates(in)) {
-                store.setCertificateEntry("extra" + index++, certificate);
+            for (int resId : extraRoots) {
+                in = context.getResources().openRawResource(resId);
+                for (Certificate certificate : certificateFactory.generateCertificates(in)) {
+                    store.setCertificateEntry("extra" + index++, certificate);
+                }
+                in.close();
+                in = null;
             }
         } finally {
             if (in != null) {
