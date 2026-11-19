@@ -260,8 +260,11 @@ public class ApiSettingsActivity extends BaseActivity {
 
                 if (token != null) {
                     String login = "";
+                    String scopes = "";
                     try {
-                        login = new GitHubClient(getApplicationContext(), token).getLogin();
+                        GitHubClient client = new GitHubClient(getApplicationContext(), token);
+                        login = client.getLogin();
+                        scopes = client.getScopes();
                     } catch (Exception ignored) {
                     }
                     Prefs.setGitHubToken(getApplicationContext(), token);
@@ -269,6 +272,7 @@ public class ApiSettingsActivity extends BaseActivity {
                         Prefs.setGitHubLogin(getApplicationContext(), login);
                     }
                     final String loginText = login;
+                    final String scopeText = scopes;
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -276,10 +280,19 @@ public class ApiSettingsActivity extends BaseActivity {
                             githubClientIdInput.setText(Prefs.getGitHubClientId(
                                     ApiSettingsActivity.this));
                             updateGitHubStatus();
-                            Toast.makeText(ApiSettingsActivity.this,
-                                    loginText.length() > 0
-                                            ? "已登录 GitHub：" + loginText
-                                            : "GitHub 登录成功",
+                            String message = loginText.length() > 0
+                                    ? "已登录 GitHub：" + loginText
+                                    : "GitHub 登录成功";
+                            if (scopeText.length() == 0) {
+                                message += "\n权限：无（无法读写仓库）";
+                            } else {
+                                message += "\n权限：" + scopeText;
+                            }
+                            if (!scopeText.contains("repo")) {
+                                message += "\n\n⚠ 未获得 repo 权限，GitHub 助手将无法提交或建库。"
+                                        + "请到 GitHub → Settings → Applications 撤销本应用授权后重新登录。";
+                            }
+                            Toast.makeText(ApiSettingsActivity.this, message,
                                     Toast.LENGTH_LONG).show();
                         }
                     });
@@ -356,9 +369,15 @@ public class ApiSettingsActivity extends BaseActivity {
             public void run() {
                 String result;
                 try {
-                    String login = new GitHubClient(ApiSettingsActivity.this, token).getLogin();
+                    GitHubClient client = new GitHubClient(ApiSettingsActivity.this, token);
+                    String login = client.getLogin();
+                    String scopes = client.getScopes();
                     Prefs.setGitHubLogin(ApiSettingsActivity.this, login);
-                    result = "连接成功，当前账号：" + login;
+                    result = "连接成功，当前账号：" + login
+                            + "\n权限：" + (scopes.length() == 0 ? "无（无法读写仓库）" : scopes);
+                    if (!scopes.contains("repo")) {
+                        result += "\n\n⚠ 缺少 repo 权限，请在 GitHub 撤销授权后重新登录";
+                    }
                 } catch (ApiException e) {
                     result = e.getMessage() == null ? "连接失败" : e.getMessage();
                 } catch (Exception e) {

@@ -26,6 +26,7 @@ public final class GitHubClient {
 
     private final Context context;
     private final String token;
+    private String scopes = "";
 
     public GitHubClient(Context context, String token) {
         this.context = context.getApplicationContext();
@@ -40,6 +41,11 @@ public final class GitHubClient {
     public String getLogin() throws ApiException {
         JSONObject user = json(request("GET", "/user", null));
         return str(user, "login");
+    }
+
+    /** 最近一次请求中 GitHub 返回的令牌权限范围。 */
+    public String getScopes() {
+        return scopes;
     }
 
     public String listRepos() throws ApiException {
@@ -585,6 +591,10 @@ public final class GitHubClient {
                 output.close();
             }
             int code = connection.getResponseCode();
+            String rawScopes = connection.getHeaderField("X-OAuth-Scopes");
+            if (rawScopes != null) {
+                scopes = rawScopes.trim();
+            }
             InputStream stream = code >= 200 && code < 300
                     ? connection.getInputStream() : connection.getErrorStream();
             String response = readAll(stream);
