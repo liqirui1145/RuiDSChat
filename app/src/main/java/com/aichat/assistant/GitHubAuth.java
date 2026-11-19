@@ -168,12 +168,33 @@ public final class GitHubAuth {
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
-            throw new ApiException("网络错误：" + e, e, e.toString());
+            String detail = describe(e);
+            throw new ApiException("网络错误：" + detail, e, detail);
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
         }
+    }
+
+    /** 把异常链拼成可读文本，便于定位 SSL 等底层错误。 */
+    private static String describe(Throwable error) {
+        StringBuilder builder = new StringBuilder();
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 5) {
+            if (builder.length() > 0) {
+                builder.append(" ← ");
+            }
+            builder.append(current.getClass().getSimpleName());
+            String message = current.getMessage();
+            if (message != null && message.length() > 0) {
+                builder.append("：").append(message);
+            }
+            current = current.getCause();
+            depth++;
+        }
+        return builder.toString();
     }
 
     private static String text(JSONObject object, String key) {

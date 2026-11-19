@@ -600,6 +600,9 @@ public final class ApiClient {
                     R.raw.deepseek_root_g2,
                     R.raw.github_usertrust_ecc,
                     R.raw.github_sectigo_e46,
+                    R.raw.github_usertrust_rsa,
+                    R.raw.github_sectigo_r46,
+                    R.raw.github_comodo_rsa,
             };
             CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
             for (int resId : extraRoots) {

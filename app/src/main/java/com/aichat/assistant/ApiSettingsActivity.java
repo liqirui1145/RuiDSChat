@@ -303,14 +303,36 @@ public class ApiSettingsActivity extends BaseActivity {
                         public void run() {
                             if (!cancelled.get()) {
                                 dialog.dismiss();
-                                Toast.makeText(ApiSettingsActivity.this, message,
-                                        Toast.LENGTH_LONG).show();
+                                showLoginError(message);
                             }
                         }
                     });
                 }
             }
         }).start();
+    }
+
+    private void showLoginError(String message) {
+        final String text = message == null || message.length() == 0
+                ? "GitHub 登录失败" : message;
+        String hint = "";
+        if (text.contains("SSL") || text.contains("CertPath") || text.contains("证书")
+                || text.contains("Handshake")) {
+            hint = "\n\n提示：若本机浏览器也打不开 GitHub，可在其他设备或电脑访问 "
+                    + "https://github.com/login/device 输入授权码完成授权，App 会自动继续登录。"
+                    + "\n另外请先关闭 VPN、广告拦截或抓包类应用再试。";
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("GitHub 登录失败")
+                .setMessage(text + hint)
+                .setPositiveButton("复制错误", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        copyToClipboard(text);
+                    }
+                })
+                .setNegativeButton("关闭", null)
+                .show();
     }
 
     private void showClientIdHelp() {
