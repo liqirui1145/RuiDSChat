@@ -17,16 +17,22 @@ import java.net.URL;
 import java.net.UnknownHostException;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 
 public final class ApiClient {
 
@@ -551,9 +557,10 @@ public final class ApiClient {
             return;
         }
         try {
+            KeyStore store = buildTrustStore(context);
             TrustManagerFactory factory = TrustManagerFactory.getInstance(
                     TrustManagerFactory.getDefaultAlgorithm());
-            factory.init(buildTrustStore(context));
+            factory.init(store);
 
             SSLContext sslContext;
             try {
@@ -561,7 +568,10 @@ public final class ApiClient {
             } catch (Exception e) {
                 sslContext = SSLContext.getInstance("TLS");
             }
-            sslContext.init(null, factory.getTrustManagers(), null);
+            TrustManager[] trustManagers = {
+                    new CompatTrustManager(factory.getTrustManagers(), store)
+            };
+            sslContext.init(null, trustManagers, null);
             HttpsURLConnection.setDefaultSSLSocketFactory(
                     new TlsSocketFactory(sslContext.getSocketFactory()));
             tlsReady = true;
@@ -622,6 +632,95 @@ public final class ApiClient {
             }
         }
         return store;
+    }
+
+    /**
+     * 旧系统（Android 5.x/6）的 PKIX 实现有时会拒绝合法证书链，
+     * 这里在系统校验失败后退回手工链校验：只接受能逐级验签、
+     * 且最终落到内置根证书、且未过期的链。
+     */
+    private static final class CompatTrustManager implements X509TrustManager {
+
+        private final X509TrustManager delegate;
+        private final Set<X509Certificate> roots = new HashSet<X509Certificate>();
+
+        CompatTrustManager(TrustManager[] managers, KeyStore store) throws Exception {
+            X509TrustManager found = null;
+            if (managers != null) {
+                for (TrustManager manager : managers) {
+                    if (manager instanceof X509TrustManager) {
+                        found = (X509TrustManager) manager;
+                        break;
+                    }
+                }
+            }
+            if (found == null) {
+                throw new IllegalStateException("缺少 X509 信任管理器");
+            }
+            delegate = found;
+            Enumeration<String> aliases = store.aliases();
+            while (aliases.hasMoreElements()) {
+                Certificate certificate = store.getCertificate(aliases.nextElement());
+                if (certificate instanceof X509Certificate) {
+                    roots.add((X509Certificate) certificate);
+                }
+            }
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType)
+                throws CertificateException {
+            delegate.checkClientTrusted(chain, authType);
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType)
+                throws CertificateException {
+            try {
+                delegate.checkServerTrusted(chain, authType);
+            } catch (CertificateException e) {
+                if (!verifyManually(chain)) {
+                    throw e;
+                }
+            }
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return delegate.getAcceptedIssuers();
+        }
+
+        private boolean verifyManually(X509Certificate[] chain) {
+            if (chain == null || chain.length == 0) {
+                return false;
+            }
+            try {
+                for (X509Certificate certificate : chain) {
+                    certificate.checkValidity();
+                }
+                for (int i = 0; i + 1 < chain.length; i++) {
+                    X509Certificate child = chain[i];
+                    X509Certificate parent = chain[i + 1];
+                    if (!child.getIssuerX500Principal().equals(parent.getSubjectX500Principal())) {
+                        return false;
+                    }
+                    child.verify(parent.getPublicKey());
+                }
+                X509Certificate last = chain[chain.length - 1];
+                if (roots.contains(last)) {
+                    return true;
+                }
+                for (X509Certificate root : roots) {
+                    if (last.getIssuerX500Principal().equals(root.getSubjectX500Principal())) {
+                        last.verify(root.getPublicKey());
+                        return true;
+                    }
+                }
+                return false;
+            } catch (Exception e) {
+                return false;
+            }
+        }
     }
 
     /** Android 4.4 默认不启用 TLS 1.2，这里强制启用。 */
