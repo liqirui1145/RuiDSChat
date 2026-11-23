@@ -174,13 +174,41 @@ public final class Prefs {
                 branch.length() == 0 ? "main" : branch).apply();
     }
 
-    /** 对话里是否开启 GitHub 助手模式。 */
-    public static boolean isGitHubMode(Context context) {
-        return sp(context).getBoolean("github_mode", false);
+    /** 当前选中的技能 id，空字符串表示普通对话。 */
+    public static String getSkillId(Context context) {
+        String value = trim(sp(context).getString("skill_id", ""));
+        if (value.length() == 0 && sp(context).getBoolean("github_mode", false)) {
+            // 兼容旧版的 GitHub 模式开关
+            return "github";
+        }
+        return value;
     }
 
-    public static void setGitHubMode(Context context, boolean value) {
-        sp(context).edit().putBoolean("github_mode", value).apply();
+    public static void setSkillId(Context context, String value) {
+        sp(context).edit().putString("skill_id", trim(value)).apply();
+    }
+
+    public static String getCustomSkillName(Context context) {
+        return trim(sp(context).getString("custom_skill_name", ""));
+    }
+
+    public static void setCustomSkillName(Context context, String value) {
+        sp(context).edit().putString("custom_skill_name", trim(value)).apply();
+    }
+
+    public static String getCustomSkillPrompt(Context context) {
+        String value = sp(context).getString("custom_skill_prompt", "");
+        return value == null ? "" : value;
+    }
+
+    public static void setCustomSkillPrompt(Context context, String value) {
+        String prompt = value == null ? "" : value.trim();
+        sp(context).edit().putString("custom_skill_prompt", prompt).apply();
+    }
+
+    /** 对话里是否开启 GitHub 助手模式（旧版开关，仅用于迁移）。 */
+    public static boolean isGitHubMode(Context context) {
+        return sp(context).getBoolean("github_mode", false);
     }
 
     /** 读取旧版存放在 SharedPreferences 里的对话数据，仅供迁移到 SQLite 使用。 */

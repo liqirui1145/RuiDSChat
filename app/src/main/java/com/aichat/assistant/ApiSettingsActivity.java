@@ -30,6 +30,8 @@ public class ApiSettingsActivity extends BaseActivity {
     private EditText visionBaseUrlInput;
     private EditText visionModelInput;
     private EditText visionKeyInput;
+    private EditText customSkillNameInput;
+    private EditText customSkillPromptInput;
     private TextView githubStatus;
     private EditText githubClientIdInput;
     private EditText githubRepoInput;
@@ -50,6 +52,8 @@ public class ApiSettingsActivity extends BaseActivity {
         visionBaseUrlInput = (EditText) findViewById(R.id.vision_base_url_input);
         visionModelInput = (EditText) findViewById(R.id.vision_model_input);
         visionKeyInput = (EditText) findViewById(R.id.vision_key_input);
+        customSkillNameInput = (EditText) findViewById(R.id.custom_skill_name_input);
+        customSkillPromptInput = (EditText) findViewById(R.id.custom_skill_prompt_input);
         githubStatus = (TextView) findViewById(R.id.github_status);
         githubClientIdInput = (EditText) findViewById(R.id.github_client_id_input);
         githubRepoInput = (EditText) findViewById(R.id.github_repo_input);
@@ -66,6 +70,8 @@ public class ApiSettingsActivity extends BaseActivity {
         visionBaseUrlInput.setText(Prefs.getVisionBaseUrl(this));
         visionModelInput.setText(Prefs.getVisionModel(this));
         visionKeyInput.setText(Prefs.getVisionKey(this));
+        customSkillNameInput.setText(Prefs.getCustomSkillName(this));
+        customSkillPromptInput.setText(Prefs.getCustomSkillPrompt(this));
         githubClientIdInput.setText(Prefs.getGitHubClientId(this));
         githubRepoInput.setText(Prefs.getGitHubRepo(this));
         githubBranchInput.setText(Prefs.getGitHubBranch(this));
@@ -140,6 +146,8 @@ public class ApiSettingsActivity extends BaseActivity {
         Prefs.setGitHubClientId(this, githubClientIdInput.getText().toString().trim());
         Prefs.setGitHubRepo(this, githubRepoInput.getText().toString().trim());
         Prefs.setGitHubBranch(this, githubBranchInput.getText().toString().trim());
+        Prefs.setCustomSkillName(this, customSkillNameInput.getText().toString().trim());
+        Prefs.setCustomSkillPrompt(this, customSkillPromptInput.getText().toString());
         if (!Prefs.setApiKey(this, apiKeyInput.getText().toString().trim())) {
             encrypted = false;
         }
@@ -369,7 +377,9 @@ public class ApiSettingsActivity extends BaseActivity {
                     public void onClick(DialogInterface dialog, int which) {
                         Prefs.setGitHubToken(ApiSettingsActivity.this, "");
                         Prefs.setGitHubLogin(ApiSettingsActivity.this, "");
-                        Prefs.setGitHubMode(ApiSettingsActivity.this, false);
+                        if ("github".equals(Prefs.getSkillId(ApiSettingsActivity.this))) {
+                            Prefs.setSkillId(ApiSettingsActivity.this, "");
+                        }
                         updateGitHubStatus();
                         Toast.makeText(ApiSettingsActivity.this, "已退出 GitHub 登录",
                                 Toast.LENGTH_SHORT).show();

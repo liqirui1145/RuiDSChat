@@ -2,194 +2,50 @@ package com.aichat.assistant;
 
 import android.content.Context;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 /**
- * GitHub 助手：让模型通过结构化 JSON 指令调用 GitHub 工具，
+ * GitHub 技能：让模型通过结构化 JSON 指令调用 GitHub 工具，
  * 在对话里完成读代码、改文件、提交 commit、建仓库、回复 issue、触发 Actions 等操作。
  */
-public final class GitHubAgent {
+public final class GitHubSkill implements AgentSkill {
 
-    private static final int MAX_ROUNDS = 6;
     private static final int MAX_ACTIONS_PER_ROUND = 6;
-    private static final int MAX_TOOL_RESULT_CHARS = 12000;
 
-    public interface Progress {
-        void onStep(String message);
-    }
+    private final GitHubClient client;
 
-    public static final class Result {
-        public final String reply;
-        public final String log;
-        public final boolean cancelled;
-
-        Result(String reply, String log, boolean cancelled) {
-            this.reply = reply == null ? "" : reply;
-            this.log = log == null ? "" : log;
-            this.cancelled = cancelled;
-        }
-    }
-
-    public static Result run(Context context, List<ChatMessage> history, String instruction,
-                             Progress progress, AtomicBoolean cancelled) throws ApiException {
+    public GitHubSkill(Context context) {
         String token = Prefs.getGitHubToken(context);
-        if (token.length() == 0) {
-            throw new ApiException("还没有配置 GitHub 令牌，请到「设置 - 接口设置 - GitHub 助手」填写");
-        }
-        String apiKey = Prefs.getApiKey(context);
-        if (apiKey.length() == 0) {
-            throw new ApiException("还没有配置对话接口的 API Key，请先到设置里填写");
-        }
-        GitHubClient client = new GitHubClient(context, token);
-        String systemPrompt = buildSystemPrompt(context);
-        String model = Prefs.getChatModel(context);
-        List<ChatMessage> working = new ArrayList<ChatMessage>(history);
-        String userText = instruction;
-        StringBuilder log = new StringBuilder();
-
-        for (int round = 0; round < MAX_ROUNDS; round++) {
-            if (isCancelled(cancelled)) {
-                return new Result("已停止 GitHub 操作。", log.toString(), true);
-            }
-            if (progress != null) {
-                progress.onStep(round == 0 ? "正在规划 GitHub 操作…"
-                        : "正在执行第 " + (round + 1) + " 轮…");
-            }
-            String raw = requestPlan(context, model, apiKey, systemPrompt, working, userText);
-            working.add(new ChatMessage(ChatMessage.ROLE_USER, userText));
-            working.add(new ChatMessage(ChatMessage.ROLE_ASSISTANT, raw));
-
-            JSONObject plan = extractJson(raw);
-            if (plan == null) {
-                // 模型没有按协议返回 JSON，直接把它的回答当作最终结果
-                return new Result(raw.trim(), log.toString(), false);
-            }
-            JSONArray actions = parseActions(plan);
-            String reply = text(plan, "reply");
-            if (actions == null || actions.length() == 0) {
-                if (reply.length() > 0) {
-                    return new Result(reply, log.toString(), false);
-                }
-                if (round == 0) {
-                    // 第一轮就没有任何动作，通常说明模型没有按 JSON 协议输出
-                    return new Result("模型没有返回可执行的操作。请换用 deepseek-chat 模型再试，"
-                            + "或把指令写得更具体（例如：读取 README.md 并把标题改成 xxx 后提交）。"
-                            + "\n\n模型原文：\n" + raw.trim(), log.toString(), false);
-                }
-                return new Result("任务已完成。", log.toString(), false);
-            }
-
-            JSONArray results = new JSONArray();
-            int count = Math.min(actions.length(), MAX_ACTIONS_PER_ROUND);
-            for (int i = 0; i < count; i++) {
-                if (isCancelled(cancelled)) {
-                    return new Result("已停止 GitHub 操作。", log.toString(), true);
-                }
-                JSONObject action = actions.optJSONObject(i);
-                if (action == null) {
-                    continue;
-                }
-                String tool = text(action, "tool");
-                JSONObject args = action.optJSONObject("args");
-                if (args == null) {
-                    args = action;
-                }
-                String label = describe(tool, args);
-                if (progress != null) {
-                    progress.onStep("正在执行：" + label);
-                }
-                try {
-                    String result = execute(context, client, tool, args);
-                    log.append("✓ ").append(label).append('\n');
-                    results.put(resultObject(tool, true, truncate(result)));
-                } catch (Exception e) {
-                    String message = e.getMessage() == null
-                            ? e.getClass().getSimpleName() : e.getMessage();
-                    log.append("✗ ").append(label).append("：").append(message).append('\n');
-                    results.put(resultObject(tool, false, message));
-                }
-            }
-            userText = "以下是工具执行结果（JSON）：\n" + results.toString()
-                    + "\n请根据结果继续。如果任务已完成，请输出空的 actions 数组，"
-                    + "并在 reply 中给出最终答复。";
-        }
-        return new Result("已达到最大执行轮数，请查看操作记录，或把任务拆小后再试。",
-                log.toString(), false);
+        client = token.length() == 0 ? null : new GitHubClient(context, token);
     }
 
-    private static boolean isCancelled(AtomicBoolean cancelled) {
-        return cancelled != null && cancelled.get();
+    @Override
+    public String id() {
+        return "github";
     }
 
-    /** 让模型输出 JSON 计划；deepseek-chat 使用 JSON 模式，推理模型退回普通对话。 */
-    private static String requestPlan(Context context, String model, String apiKey,
-                                      String systemPrompt, List<ChatMessage> working,
-                                      String userText) throws ApiException {
-        String baseUrl = Prefs.getBaseUrl(context);
-        if (model != null && model.contains("reasoner")) {
-            return ApiClient.chat(context, baseUrl, apiKey, model, systemPrompt,
-                    working, userText, null);
-        }
-        try {
-            return ApiClient.chatJson(context, baseUrl, apiKey, model, systemPrompt,
-                    working, userText);
-        } catch (ApiException e) {
-            int code = e.getStatusCode();
-            if (code == 400 || code == 404 || code == 422) {
-                // 部分第三方兼容接口不支持 response_format，退回普通对话
-                return ApiClient.chat(context, baseUrl, apiKey, model, systemPrompt,
-                        working, userText, null);
-            }
-            throw e;
+    @Override
+    public String label() {
+        return "GitHub";
+    }
+
+    @Override
+    public boolean usesTools() {
+        return true;
+    }
+
+    @Override
+    public void checkReady(Context context) throws ApiException {
+        if (Prefs.getGitHubToken(context).trim().length() == 0) {
+            throw new ApiException("还没有连接 GitHub，请到「接口设置 - GitHub 助手」完成登录");
         }
     }
 
-    /** 兼容 actions 为数组、JSON 字符串或单个对象，以及省略 plan 直接给工具的情况。 */
-    private static JSONArray parseActions(JSONObject plan) {
-        JSONArray actions = plan.optJSONArray("actions");
-        if (actions == null) {
-            actions = plan.optJSONArray("action");
+    @Override
+    public String execute(Context context, String tool, JSONObject args) throws ApiException {
+        if (client == null) {
+            throw new ApiException("还没有连接 GitHub，请到设置里完成登录");
         }
-        if (actions == null) {
-            Object raw = plan.opt("actions");
-            if (raw instanceof String) {
-                String value = ((String) raw).trim();
-                try {
-                    actions = new JSONArray(value);
-                } catch (Exception e) {
-                    try {
-                        actions = new JSONArray().put(new JSONObject(value));
-                    } catch (Exception ignored) {
-                    }
-                }
-            } else if (raw instanceof JSONObject) {
-                actions = new JSONArray().put((JSONObject) raw);
-            }
-        }
-        if (actions == null && text(plan, "tool").length() > 0) {
-            actions = new JSONArray().put(plan);
-        }
-        return actions;
-    }
-
-    private static JSONObject resultObject(String tool, boolean ok, String result) {
-        JSONObject object = new JSONObject();
-        try {
-            object.put("tool", tool);
-            object.put("ok", ok);
-            object.put("result", result);
-        } catch (Exception ignored) {
-        }
-        return object;
-    }
-
-    private static String execute(Context context, GitHubClient client, String tool,
-                                  JSONObject args) throws ApiException {
         String repoFull = text(args, "repo");
         if (repoFull.length() == 0) {
             repoFull = Prefs.getGitHubRepo(context);
@@ -291,7 +147,8 @@ public final class GitHubAgent {
         throw new ApiException("不支持的工具：" + tool);
     }
 
-    private static String describe(String tool, JSONObject args) {
+    @Override
+    public String describe(String tool, JSONObject args) {
         if ("read_file".equals(tool) || "write_file".equals(tool)
                 || "list_files".equals(tool)) {
             String path = text(args, "path");
@@ -356,7 +213,8 @@ public final class GitHubAgent {
         return tool;
     }
 
-    private static String buildSystemPrompt(Context context) {
+    @Override
+    public String systemPrompt(Context context) {
         String repo = Prefs.getGitHubRepo(context);
         if (repo.length() == 0) {
             repo = "（未配置）";
@@ -400,52 +258,6 @@ public final class GitHubAgent {
                 + "list_commits {branch?,repo?} 查看提交记录\n"
                 + "list_releases {repo?} 查看 Release 列表\n"
                 + "create_release {tag,title?,body?,target?,draft?,prerelease?,repo?} 创建 tag 并发布 Release";
-    }
-
-    /** 从模型输出里提取 JSON；兼容被 ``` 包裹或前后带解释的情况。 */
-    private static JSONObject extractJson(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String text = raw.trim();
-        int fence = text.indexOf("```");
-        if (fence >= 0) {
-            int lineEnd = text.indexOf('\n', fence);
-            if (lineEnd > 0) {
-                text = text.substring(lineEnd + 1);
-            }
-            int endFence = text.lastIndexOf("```");
-            if (endFence >= 0) {
-                text = text.substring(0, endFence);
-            }
-        }
-        text = text.trim();
-        if (text.startsWith("[") && text.endsWith("]")) {
-            try {
-                return new JSONObject().put("actions", new JSONArray(text));
-            } catch (Exception ignored) {
-            }
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start < 0 || end <= start) {
-            return null;
-        }
-        try {
-            return new JSONObject(text.substring(start, end + 1));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static String truncate(String value) {
-        if (value == null) {
-            return "";
-        }
-        if (value.length() <= MAX_TOOL_RESULT_CHARS) {
-            return value;
-        }
-        return value.substring(0, MAX_TOOL_RESULT_CHARS) + "\n【结果已截断】";
     }
 
     private static String text(JSONObject object, String key) {

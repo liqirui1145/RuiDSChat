@@ -218,7 +218,7 @@
             android:paddingTop="6dp">
 
             <TextView
-                android:id="@+id/github_button"
+                android:id="@+id/skill_button"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:layout_marginRight="8dp"
@@ -226,7 +226,7 @@
                 android:gravity="center"
                 android:paddingLeft="10dp"
                 android:paddingRight="10dp"
-                android:text="GitHub 关闭"
+                android:text="技能 普通"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 

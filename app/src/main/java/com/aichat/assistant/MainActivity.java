@@ -47,9 +47,9 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private TextView attachButton;
     private TextView thinkingButton;
     private TextView modelButton;
-    private TextView githubButton;
-    /** GitHub 助手模式：开启后发送的指令交给 GitHubAgent 直接操作 GitHub。 */
-    private boolean githubMode;
+    private TextView skillButton;
+    /** 当前技能 id，空字符串表示普通对话。 */
+    private String activeSkillId = "";
     private java.util.concurrent.atomic.AtomicBoolean agentCancelled;
     /** 对话时可选的 DeepSeek 模型。 */
     private static final String[] MODEL_VALUES =
@@ -158,7 +158,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         attachButton = (TextView) findViewById(R.id.attach_button);
         thinkingButton = (TextView) findViewById(R.id.thinking_button);
         modelButton = (TextView) findViewById(R.id.model_button);
-        githubButton = (TextView) findViewById(R.id.github_button);
+        skillButton = (TextView) findViewById(R.id.skill_button);
         statusRow = (LinearLayout) findViewById(R.id.status_row);
         statusText = (TextView) findViewById(R.id.status_text);
         attachmentRow = (LinearLayout) findViewById(R.id.attachment_row);
@@ -265,14 +265,14 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                 showModelDialog();
             }
         });
-        githubButton.setOnClickListener(new View.OnClickListener() {
+        skillButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                toggleGitHubMode();
+                showSkillDialog();
             }
         });
-        githubMode = Prefs.isGitHubMode(this);
-        updateGitHubLabel();
+        activeSkillId = Prefs.getSkillId(this);
+        updateSkillLabel();
         updateThinkingLabel();
         updateModelLabel();
         findViewById(R.id.drawer_button).setOnClickListener(new View.OnClickListener() {
@@ -377,6 +377,8 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     protected void onResume() {
         super.onResume();
         recreateIfThemeChanged();
+        activeSkillId = Prefs.getSkillId(this);
+        updateSkillLabel();
         TextView emptySettingsButton = (TextView) findViewById(R.id.empty_settings_button);
         if (emptySettingsButton != null) {
             boolean hasKey = Prefs.getApiKey(this).trim().length() > 0;
@@ -446,13 +448,16 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             toast("请输入内容或添加附件");
             return;
         }
-        if (githubMode) {
+        AgentSkill skill = activeSkillId.length() == 0 ? null : buildSkill(activeSkillId);
+        if (skill != null) {
             if (pendingUri != null) {
-                toast("GitHub 模式下暂不支持附件，请先移除附件");
+                toast("技能模式下暂不支持附件，请先移除附件");
                 return;
             }
-            if (Prefs.getGitHubToken(this).trim().length() == 0) {
-                showGitHubTokenDialog();
+            try {
+                skill.checkReady(this);
+            } catch (ApiException e) {
+                toast(e.getMessage());
                 return;
             }
             ChatMessage message = new ChatMessage(ChatMessage.ROLE_USER, typed);
@@ -466,7 +471,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
             final List<ChatMessage> prior = ContextWindow.trim(
                     new ArrayList<ChatMessage>(messages.subList(0, messages.size() - 1)),
                     Prefs.getContextMessages(this));
-            startGitHubAgent(prior, typed);
+            startAgent(prior, typed, skill);
             return;
         }
         String apiKey = Prefs.getApiKey(this);
@@ -656,58 +661,61 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         showStatus("正在停止…");
     }
 
-    /** GitHub 模式：把指令交给 GitHubAgent，由模型规划并执行 GitHub 操作。 */
-    private void startGitHubAgent(final List<ChatMessage> prior, final String instruction) {
+    /** 技能模式：把指令交给 AgentRunner，由模型规划并调用技能工具。 */
+    private void startAgent(final List<ChatMessage> prior, final String instruction,
+                            final AgentSkill skill) {
         sending = true;
         setBusy(true);
-        showStatus("正在规划 GitHub 操作…");
+        showStatus("正在规划操作…");
 
         final java.util.concurrent.atomic.AtomicBoolean cancelled =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         agentCancelled = cancelled;
 
         ChatMessage placeholder = new ChatMessage(ChatMessage.ROLE_ASSISTANT,
-                "正在规划 GitHub 操作…");
+                "正在规划操作…");
         streamingMessage = placeholder;
         messages.add(placeholder);
         adapter.notifyDataSetChanged();
         atBottom = true;
         scrollToBottom();
 
+        final String label = skill.label();
         final Context appContext = getApplicationContext();
         executor.execute(new Runnable() {
             @Override
             public void run() {
                 try {
-                    GitHubAgent.Result result = GitHubAgent.run(appContext, prior, instruction,
-                            new GitHubAgent.Progress() {
+                    AgentRunner.Result result = AgentRunner.run(appContext, skill, prior,
+                            instruction, new AgentRunner.Progress() {
                                 @Override
                                 public void onStep(String message) {
                                     updateStatus(message);
                                 }
                             }, cancelled);
-                    finishAgent(result.reply, result.log, result.cancelled, null, null);
+                    finishAgent(result.reply, result.log, result.cancelled, null, null, label);
                 } catch (Exception e) {
                     if (cancelled.get()) {
-                        finishAgent(null, null, true, null, null);
+                        finishAgent(null, null, true, null, null, label);
                         return;
                     }
                     String error = e.getMessage();
                     if (error == null || error.trim().length() == 0) {
-                        error = "GitHub 操作失败，请稍后重试";
+                        error = label + " 操作失败，请稍后重试";
                     }
                     String diagnostic = e instanceof ApiException
                             ? ((ApiException) e).getDiagnostics()
                             : e.getClass().getSimpleName()
                             + (e.getMessage() == null ? "" : ": " + e.getMessage());
-                    finishAgent(null, null, false, error, diagnostic);
+                    finishAgent(null, null, false, error, diagnostic, label);
                 }
             }
         });
     }
 
     private void finishAgent(final String reply, final String log, final boolean cancelled,
-                             final String error, final String diagnostic) {
+                             final String error, final String diagnostic,
+                             final String label) {
         handler.post(new Runnable() {
             @Override
             public void run() {
@@ -738,10 +746,11 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
                         if (builder.length() > 0) {
                             builder.append("\n\n");
                         }
-                        builder.append("—— GitHub 操作记录 ——\n").append(log.trim());
+                        builder.append("—— ").append(label).append(" 操作记录 ——\n")
+                                .append(log.trim());
                     }
                     if (builder.length() == 0) {
-                        builder.append(cancelled ? "已停止 GitHub 操作。" : "任务已完成。");
+                        builder.append(cancelled ? "已停止操作。" : "任务已完成。");
                     } else if (cancelled) {
                         builder.append("\n\n（已停止）");
                     }
@@ -762,22 +771,81 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         });
     }
 
-    private void toggleGitHubMode() {
-        if (!githubMode && Prefs.getGitHubToken(this).trim().length() == 0) {
-            showGitHubTokenDialog();
-            return;
+    /** 构建当前选中的技能实例；未知 id 返回 null。 */
+    private AgentSkill buildSkill(String id) {
+        if ("github".equals(id)) {
+            return new GitHubSkill(this);
         }
-        githubMode = !githubMode;
-        Prefs.setGitHubMode(this, githubMode);
-        updateGitHubLabel();
-        toast(githubMode
-                ? "GitHub 模式已开启，发送的指令将由 AI 直接操作 GitHub"
-                : "GitHub 模式已关闭");
+        if ("custom".equals(id)) {
+            return new PromptSkill();
+        }
+        return null;
     }
 
-    private void updateGitHubLabel() {
-        githubButton.setText(githubMode ? "GitHub 已开" : "GitHub 关闭");
-        githubButton.setTextColor(githubMode ? 0xFF4A76A8 : 0xFF5F6670);
+    private void showSkillDialog() {
+        final String[] ids = new String[]{"", "github", "custom"};
+        String customName = Prefs.getCustomSkillName(this);
+        if (customName.length() == 0) {
+            customName = "自定义";
+        }
+        final String[] labels = new String[]{
+                "普通对话", "GitHub 助手", customName + "（自定义）"
+        };
+        int checked = 0;
+        for (int i = 0; i < ids.length; i++) {
+            if (ids[i].equals(activeSkillId)) {
+                checked = i;
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("选择技能")
+                .setSingleChoiceItems(labels, checked, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        dialog.dismiss();
+                        selectSkill(ids[which]);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void selectSkill(String id) {
+        AgentSkill skill = buildSkill(id);
+        if (skill != null) {
+            try {
+                skill.checkReady(this);
+            } catch (ApiException e) {
+                if ("github".equals(id)) {
+                    showGitHubTokenDialog();
+                } else {
+                    toast(e.getMessage());
+                }
+                return;
+            }
+        }
+        activeSkillId = id;
+        Prefs.setSkillId(this, id);
+        updateSkillLabel();
+        if (skill == null) {
+            toast("已切换为普通对话");
+        } else {
+            toast("已选择技能：" + skill.label());
+        }
+    }
+
+    private void updateSkillLabel() {
+        String label = "普通";
+        if ("github".equals(activeSkillId)) {
+            label = "GitHub";
+        } else if ("custom".equals(activeSkillId)) {
+            label = Prefs.getCustomSkillName(this);
+            if (label.length() == 0) {
+                label = "自定义";
+            }
+        }
+        skillButton.setText("技能 " + label);
+        skillButton.setTextColor(activeSkillId.length() == 0 ? 0xFF5F6670 : 0xFF4A76A8);
     }
 
     private void showGitHubTokenDialog() {
