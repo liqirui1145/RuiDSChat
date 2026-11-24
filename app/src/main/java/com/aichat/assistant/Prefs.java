@@ -17,7 +17,7 @@ public final class Prefs {
     private static final String KEY_CURRENT_CONVERSATION = "current_conversation_id";
 
     public static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
-    public static final String DEFAULT_CHAT_MODEL = "deepseek-chat";
+    public static final String DEFAULT_CHAT_MODEL = "deepseek-flash";
     public static final String DEFAULT_VISION_MODEL = "deepseek-flash";
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的 AI 助手，请使用简体中文回答。";
 
@@ -48,7 +48,16 @@ public final class Prefs {
 
     public static String getChatModel(Context context) {
         String value = sp(context).getString("chat_model", DEFAULT_CHAT_MODEL);
-        return value == null || value.trim().length() == 0 ? DEFAULT_CHAT_MODEL : value.trim();
+        if (value == null || value.trim().length() == 0) {
+            return DEFAULT_CHAT_MODEL;
+        }
+        value = value.trim();
+        // 旧模型已下线，自动迁移到当前通用模型
+        if ("deepseek-chat".equals(value) || "deepseek-reasoner".equals(value)
+                || "deepseek-v4-flash".equals(value)) {
+            return DEFAULT_CHAT_MODEL;
+        }
+        return value;
     }
 
     public static void setChatModel(Context context, String value) {

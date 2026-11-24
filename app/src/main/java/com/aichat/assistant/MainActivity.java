@@ -53,11 +53,11 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     private java.util.concurrent.atomic.AtomicBoolean agentCancelled;
     /** 对话时可选的 DeepSeek 模型。 */
     private static final String[] MODEL_VALUES =
-            new String[]{"deepseek-chat", "deepseek-reasoner"};
+            new String[]{"deepseek-flash", "deepseek-v4-pro"};
     private static final String[] MODEL_NAMES =
-            new String[]{"DeepSeek-V3 · 通用对话", "DeepSeek-R1 · 深度推理"};
+            new String[]{"DeepSeek V4.1 Flash", "DeepSeek V4 Pro"};
     private static final String[] MODEL_CHIP_LABELS =
-            new String[]{"V3 通用", "R1 推理"};
+            new String[]{"V4.1 Flash", "V4 Pro"};
     /** 思考强度选项，下标与 Prefs.getReasoningLevel 对应。 */
     private static final String[] REASONING_LABELS =
             new String[]{"关闭（直接回答）", "极低", "低", "中", "高"};
@@ -1423,7 +1423,7 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         editor.setSelection(editor.getText().length());
         new AlertDialog.Builder(this)
                 .setTitle("自定义模型名")
-                .setMessage("填写接口支持的模型标识，例如 deepseek-chat")
+                .setMessage("填写接口支持的模型标识，例如 deepseek-flash")
                 .setView(editor)
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                     @Override

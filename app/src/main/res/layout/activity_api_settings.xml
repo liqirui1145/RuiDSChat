@@ -92,7 +92,7 @@
                 <EditText
                     android:id="@+id/chat_model_input"
                     style="@style/FieldInput"
-                    android:hint="deepseek-chat"
+                    android:hint="deepseek-flash"
                     android:inputType="text" />
 
                 <TextView
@@ -159,7 +159,7 @@
 
                 <TextView
                     style="@style/FieldHint"
-                    android:text="默认按 deepseek-chat 的 ¥2 / ¥8 估算。抽屉底部的会话用量与费用仅作参考，实际以服务商账单为准。" />
+                    android:text="默认按 deepseek-flash 的 ¥2 / ¥8 估算。抽屉底部的会话用量与费用仅作参考，实际以服务商账单为准。" />
             </LinearLayout>
 
             <TextView

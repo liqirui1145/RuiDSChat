@@ -89,7 +89,7 @@ public final class AgentRunner {
                     return new Result(reply, log.toString(), false);
                 }
                 if (round == 0) {
-                    return new Result("模型没有返回可执行的操作。请换用 deepseek-chat 模型再试，"
+                    return new Result("模型没有返回可执行的操作。请换用 deepseek-flash 模型再试，"
                             + "或把指令写得更具体。\n\n模型原文：\n" + raw.trim(),
                             log.toString(), false);
                 }
@@ -138,15 +138,11 @@ public final class AgentRunner {
         return cancelled != null && cancelled.get();
     }
 
-    /** 让模型输出 JSON 计划；deepseek-chat 使用 JSON 模式，推理模型退回普通对话。 */
+    /** 让模型输出 JSON 计划；优先使用 JSON 模式，不支持时退回普通对话。 */
     private static String requestPlan(Context context, String model, String apiKey,
                                       String systemPrompt, List<ChatMessage> working,
                                       String userText) throws ApiException {
         String baseUrl = Prefs.getBaseUrl(context);
-        if (model != null && model.contains("reasoner")) {
-            return ApiClient.chat(context, baseUrl, apiKey, model, systemPrompt,
-                    working, userText, null);
-        }
         try {
             return ApiClient.chatJson(context, baseUrl, apiKey, model, systemPrompt,
                     working, userText);

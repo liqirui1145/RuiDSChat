@@ -309,7 +309,7 @@ public final class ApiClient {
         }
     }
 
-    /** 思考强度可选值，与 Prefs.getReasoningLevel 的下标一一对应（0 表示不传）。 */
+    /** 思考强度可选值，与 Prefs.getReasoningLevel 的下标一一对应（0 表示关闭思考）。 */
     private static final String[] REASONING_EFFORTS =
             new String[]{"", "minimal", "low", "medium", "high"};
 
@@ -330,8 +330,14 @@ public final class ApiClient {
         if (maxTokens > 0) {
             root.put("max_tokens", maxTokens);
         }
+        if (model != null && model.startsWith("deepseek")) {
+            // DeepSeek V4 起思考模式默认开启，需要用 thinking 显式开关
+            JSONObject thinking = new JSONObject();
+            thinking.put("type", reasoningLevel > 0 ? "enabled" : "disabled");
+            root.put("thinking", thinking);
+        }
         if (reasoningLevel > 0 && reasoningLevel < REASONING_EFFORTS.length) {
-            // 兼容 OpenAI 系推理接口；不支持该参数的接口通常会忽略
+            // 思考强度：low / high / max
             root.put("reasoning_effort", REASONING_EFFORTS[reasoningLevel]);
         }
 
