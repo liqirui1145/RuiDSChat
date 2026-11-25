@@ -19,6 +19,16 @@ public final class AgentRunner {
     private static final int MAX_ACTIONS_PER_ROUND = 6;
     private static final int MAX_TOOL_RESULT_CHARS = 12000;
 
+    /** 所有工具型技能共用的输出协议，避免每个技能重复维护。 */
+    private static final String TOOL_PROTOCOL = "\n\n输出要求（必须严格遵守）：\n"
+            + "1. 只输出一个 JSON 对象，不要 Markdown 代码块，不要输出任何解释文字。\n"
+            + "2. 结构：{\"plan\":\"一句话计划\",\"actions\":[{\"tool\":\"工具名\",\"args\":{...}}],"
+            + "\"reply\":\"给用户的最终答复\"}。\n"
+            + "3. 需要真实数据或要执行动作时必须调用工具，禁止只回复「我可以帮你」。\n"
+            + "4. 每次最多 " + MAX_ACTIONS_PER_ROUND + " 个 actions；任务完成时 actions 为空数组。\n"
+            + "5. 工具失败时根据错误信息调整参数重试，仍失败则在 reply 里如实说明原因。\n"
+            + "6. reply 用简体中文，简明说明实际做了什么、结果如何。";
+
     public interface Progress {
         void onStep(String message);
     }
@@ -51,6 +61,9 @@ public final class AgentRunner {
         }
         String model = Prefs.getChatModel(context);
         String systemPrompt = skill.systemPrompt(context);
+        if (skill.usesTools()) {
+            systemPrompt = systemPrompt + TOOL_PROTOCOL;
+        }
 
         if (!skill.usesTools()) {
             if (progress != null) {

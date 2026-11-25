@@ -776,6 +776,15 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         if ("github".equals(id)) {
             return new GitHubSkill(this);
         }
+        if ("web".equals(id)) {
+            return new WebReadSkill();
+        }
+        if ("calc".equals(id)) {
+            return new CalcSkill();
+        }
+        if ("clipboard".equals(id)) {
+            return new ClipboardSkill();
+        }
         if ("custom".equals(id)) {
             return new PromptSkill();
         }
@@ -783,13 +792,18 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
     }
 
     private void showSkillDialog() {
-        final String[] ids = new String[]{"", "github", "custom"};
+        final String[] ids = new String[]{"", "github", "web", "calc", "clipboard", "custom"};
         String customName = Prefs.getCustomSkillName(this);
         if (customName.length() == 0) {
             customName = "自定义";
         }
         final String[] labels = new String[]{
-                "普通对话", "GitHub 助手", customName + "（自定义）"
+                "普通对话",
+                "GitHub 助手 · 改代码/提交/建库",
+                "网页阅读 · 抓取链接并总结",
+                "计算器 · 四则运算/日期差",
+                "剪贴板 · 读取与写回",
+                customName + "（自定义）"
         };
         int checked = 0;
         for (int i = 0; i < ids.length; i++) {
@@ -838,6 +852,12 @@ public class MainActivity extends BaseActivity implements ChatAdapter.OnMessageA
         String label = "普通";
         if ("github".equals(activeSkillId)) {
             label = "GitHub";
+        } else if ("web".equals(activeSkillId)) {
+            label = "网页阅读";
+        } else if ("calc".equals(activeSkillId)) {
+            label = "计算器";
+        } else if ("clipboard".equals(activeSkillId)) {
+            label = "剪贴板";
         } else if ("custom".equals(activeSkillId)) {
             label = Prefs.getCustomSkillName(this);
             if (label.length() == 0) {

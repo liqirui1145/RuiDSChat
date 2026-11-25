@@ -331,7 +331,7 @@
                 <TextView
                     style="@style/FieldHint"
                     android:paddingTop="12dp"
-                    android:text="在对话输入框上方的「技能」按钮里切换。GitHub 助手使用上方已登录的账号；自定义技能只发送下面的提示词，不调用任何工具。" />
+                    android:text="在对话输入框上方的「技能」按钮里切换。内置 GitHub 助手、网页阅读、计算器、剪贴板；自定义技能只发送下面的提示词，不调用任何工具。" />
 
                 <TextView
                     style="@style/FieldLabel"
